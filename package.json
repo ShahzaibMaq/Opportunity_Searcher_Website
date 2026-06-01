@@ -1,4 +1,10 @@
 {
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix frontend/opportunity_searcher run dev",
+    "build": "npm --prefix frontend/opportunity_searcher run build",
+    "lint": "npm --prefix frontend/opportunity_searcher run lint"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.4"
   }

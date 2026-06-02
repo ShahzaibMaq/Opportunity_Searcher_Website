@@ -5,125 +5,30 @@ import {
   CalendarDays,
   Check,
   Clock3,
+  Database,
   ExternalLink,
   Globe2,
   GraduationCap,
   MapPin,
   Search,
   SlidersHorizontal,
-  Sparkles,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type Opportunity = {
   title: string;
   organization: string;
   category: string;
   location: string;
-  subject: string;
+  subject_area: string;
   deadline: string;
-  grades: string;
+  grade_level: string;
   description: string;
-  source: string;
   link: string;
-  featured?: boolean;
+  source: string;
+  source_url: string;
+  scraped_at: string;
 };
-
-const opportunities: Opportunity[] = [
-  {
-    title: "Summer Science Research Program",
-    organization: "Pathways to Science",
-    category: "Research",
-    location: "United States",
-    subject: "STEM",
-    deadline: "2026-06-15",
-    grades: "10-12",
-    description:
-      "Lab-based summer placement for students interested in biology, engineering, and environmental science.",
-    source: "Pathways to Science",
-    link: "https://www.pathwaystoscience.org/",
-    featured: true,
-  },
-  {
-    title: "Youth Climate Innovation Challenge",
-    organization: "Youthop",
-    category: "Competition",
-    location: "Global",
-    subject: "Environment",
-    deadline: "2026-07-01",
-    grades: "9-12",
-    description:
-      "Student teams submit practical climate solutions and receive mentor feedback from sustainability leaders.",
-    source: "Youthop",
-    link: "https://www.youthop.com/",
-  },
-  {
-    title: "Future Leaders Scholarship",
-    organization: "OpportunitiesCorner",
-    category: "Scholarship",
-    location: "Global",
-    subject: "Leadership",
-    deadline: "2026-06-08",
-    grades: "11-12",
-    description:
-      "Merit scholarship for high school students with community service, leadership work, and strong academics.",
-    source: "OpportunitiesCorner",
-    link: "https://opportunitiescorners.com/",
-    featured: true,
-  },
-  {
-    title: "Remote Data Journalism Internship",
-    organization: "Student News Lab",
-    category: "Internship",
-    location: "Remote",
-    subject: "Computer Science",
-    deadline: "2026-06-28",
-    grades: "10-12",
-    description:
-      "Part-time remote internship building charts, cleaning public datasets, and publishing student-friendly explainers.",
-    source: "Manual review",
-    link: "https://example.com/",
-  },
-  {
-    title: "New Jersey Civic Tech Fellowship",
-    organization: "Garden State STEM",
-    category: "Internship",
-    location: "New Jersey",
-    subject: "Civic Tech",
-    deadline: "2026-06-03",
-    grades: "11-12",
-    description:
-      "Local summer fellowship where students prototype lightweight tools for schools and community nonprofits.",
-    source: "Local source",
-    link: "https://example.com/",
-    featured: true,
-  },
-  {
-    title: "Global Essay Prize",
-    organization: "International Student Forum",
-    category: "Competition",
-    location: "Global",
-    subject: "Humanities",
-    deadline: "2026-08-10",
-    grades: "9-12",
-    description:
-      "Essay competition for students writing about public policy, ethics, history, and global cooperation.",
-    source: "Youthop",
-    link: "https://example.com/",
-  },
-];
-
-const categories = ["All", "Internship", "Research", "Competition", "Scholarship"];
-const locations = ["All", "Global", "United States", "Remote", "New Jersey"];
-const subjects = [
-  "All",
-  "STEM",
-  "Computer Science",
-  "Environment",
-  "Leadership",
-  "Humanities",
-  "Civic Tech",
-];
 
 const dateFormatter = new Intl.DateTimeFormat("en", {
   month: "short",
@@ -131,12 +36,79 @@ const dateFormatter = new Intl.DateTimeFormat("en", {
   year: "numeric",
 });
 
-const currentDate = new Date("2026-05-29T12:00:00");
+function uniqueSorted(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean))).sort((first, second) =>
+    first.localeCompare(second),
+  );
+}
+
+function splitValues(value: string) {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseDeadline(deadline: string) {
+  if (!deadline) {
+    return null;
+  }
+
+  const value = /\d{4}/.test(deadline)
+    ? deadline
+    : `${deadline}, ${new Date().getFullYear()}`;
+  const parsed = new Date(value);
+
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
 
 function daysUntil(deadline: string) {
-  const end = new Date(`${deadline}T12:00:00`);
-  const difference = end.getTime() - currentDate.getTime();
-  return Math.ceil(difference / (1000 * 60 * 60 * 24));
+  const parsed = parseDeadline(deadline);
+  if (!parsed) {
+    return null;
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  parsed.setHours(0, 0, 0, 0);
+
+  return Math.ceil((parsed.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function deadlineLabel(deadline: string) {
+  const parsed = parseDeadline(deadline);
+  return parsed ? dateFormatter.format(parsed) : "Deadline not listed";
+}
+
+function countdownLabel(deadline: string) {
+  const days = daysUntil(deadline);
+  if (days === null) {
+    return "Deadline not listed";
+  }
+  if (days < 0) {
+    return "Deadline passed";
+  }
+  if (days === 0) {
+    return "Due today";
+  }
+  return `${days} days left`;
+}
+
+function compareByDeadline(first: Opportunity, second: Opportunity, soonestFirst: boolean) {
+  const firstDate = parseDeadline(first.deadline)?.getTime();
+  const secondDate = parseDeadline(second.deadline)?.getTime();
+
+  if (firstDate === undefined && secondDate === undefined) {
+    return first.title.localeCompare(second.title);
+  }
+  if (firstDate === undefined) {
+    return 1;
+  }
+  if (secondDate === undefined) {
+    return -1;
+  }
+
+  return soonestFirst ? firstDate - secondDate : secondDate - firstDate;
 }
 
 function SelectFilter({
@@ -167,11 +139,82 @@ function SelectFilter({
 }
 
 export default function Home() {
+  const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [dataError, setDataError] = useState("");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All");
   const [location, setLocation] = useState("All");
   const [subject, setSubject] = useState("All");
   const [sortSoonest, setSortSoonest] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    fetch("/data/opportunities.json")
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error("Run the scraper to create /data/opportunities.json.");
+        }
+        return response.json() as Promise<Opportunity[]>;
+      })
+      .then((records) => {
+        if (!isMounted) {
+          return;
+        }
+        setOpportunities(records);
+        setDataError("");
+      })
+      .catch((error: Error) => {
+        if (!isMounted) {
+          return;
+        }
+        setDataError(error.message);
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const categories = useMemo(
+    () => ["All", ...uniqueSorted(opportunities.map((opportunity) => opportunity.category))],
+    [opportunities],
+  );
+
+  const locations = useMemo(
+    () => ["All", ...uniqueSorted(opportunities.map((opportunity) => opportunity.location))],
+    [opportunities],
+  );
+
+  const subjects = useMemo(
+    () => [
+      "All",
+      ...uniqueSorted(
+        opportunities.flatMap((opportunity) => splitValues(opportunity.subject_area)),
+      ),
+    ],
+    [opportunities],
+  );
+
+  const sources = useMemo(
+    () => uniqueSorted(opportunities.map((opportunity) => opportunity.source)),
+    [opportunities],
+  );
+
+  const lastScraped = useMemo(() => {
+    const latest = opportunities
+      .map((opportunity) => new Date(opportunity.scraped_at).getTime())
+      .filter((value) => !Number.isNaN(value))
+      .sort((first, second) => second - first)[0];
+
+    return latest ? dateFormatter.format(new Date(latest)) : "Not run yet";
+  }, [opportunities]);
 
   const visibleOpportunities = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -184,7 +227,9 @@ export default function Home() {
           opportunity.description,
           opportunity.category,
           opportunity.location,
-          opportunity.subject,
+          opportunity.subject_area,
+          opportunity.grade_level,
+          opportunity.source,
         ]
           .join(" ")
           .toLowerCase();
@@ -193,19 +238,16 @@ export default function Home() {
           (!normalizedQuery || searchable.includes(normalizedQuery)) &&
           (category === "All" || opportunity.category === category) &&
           (location === "All" || opportunity.location === location) &&
-          (subject === "All" || opportunity.subject === subject)
+          (subject === "All" || splitValues(opportunity.subject_area).includes(subject))
         );
       })
-      .sort((first, second) => {
-        const firstDate = new Date(first.deadline).getTime();
-        const secondDate = new Date(second.deadline).getTime();
-        return sortSoonest ? firstDate - secondDate : secondDate - firstDate;
-      });
-  }, [category, location, query, sortSoonest, subject]);
+      .sort((first, second) => compareByDeadline(first, second, sortSoonest));
+  }, [category, location, opportunities, query, sortSoonest, subject]);
 
-  const closingSoon = opportunities.filter(
-    (opportunity) => daysUntil(opportunity.deadline) <= 10,
-  ).length;
+  const closingSoon = opportunities.filter((opportunity) => {
+    const days = daysUntil(opportunity.deadline);
+    return days !== null && days >= 0 && days <= 10;
+  }).length;
 
   return (
     <main className="min-h-screen bg-[#f6f7f3] text-slate-950">
@@ -217,13 +259,13 @@ export default function Home() {
                 <GraduationCap size={22} aria-hidden="true" />
               </div>
               <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                <p className="text-sm font-semibold uppercase text-emerald-700">
                   Opportunity Searcher
                 </p>
                 <p className="text-sm text-slate-500">Built for high school students</p>
               </div>
             </div>
-            <h1 className="max-w-2xl text-4xl font-semibold leading-tight tracking-normal text-slate-950 sm:text-5xl">
+            <h1 className="max-w-2xl text-4xl font-semibold leading-tight text-slate-950 sm:text-5xl">
               Find internships, programs, scholarships, and competitions in one place.
             </h1>
           </div>
@@ -238,7 +280,7 @@ export default function Home() {
               <p className="text-slate-500">Closing soon</p>
             </div>
             <div className="rounded-lg border border-slate-200 bg-white p-4">
-              <p className="text-2xl font-semibold">3</p>
+              <p className="text-2xl font-semibold">{sources.length}</p>
               <p className="text-slate-500">Sources</p>
             </div>
           </div>
@@ -270,10 +312,11 @@ export default function Home() {
                       key={item}
                       type="button"
                       onClick={() => setCategory(item)}
-                      className={`flex h-10 shrink-0 items-center gap-2 rounded-lg border px-4 text-sm font-medium transition ${selected
-                        ? "border-slate-950 bg-slate-950 text-white"
-                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                        }`}
+                      className={`flex h-10 shrink-0 items-center gap-2 rounded-lg border px-4 text-sm font-medium transition ${
+                        selected
+                          ? "border-slate-950 bg-slate-950 text-white"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                      }`}
                     >
                       {selected ? <Check size={16} aria-hidden="true" /> : null}
                       {item}
@@ -310,13 +353,13 @@ export default function Home() {
 
           <aside className="rounded-lg border border-slate-200 bg-slate-950 p-5 text-white">
             <div className="flex items-center gap-2 text-emerald-300">
-              <Sparkles size={18} aria-hidden="true" />
-              <p className="text-sm font-semibold">Project stack</p>
+              <Database size={18} aria-hidden="true" />
+              <p className="text-sm font-semibold">Scraped data</p>
             </div>
             <div className="mt-4 grid gap-3 text-sm text-slate-300">
-              <p>Next.js frontend with Tailwind styling.</p>
-              <p>Supabase client dependency is installed for Postgres data.</p>
-              <p>Python scraper and GitHub Actions folders are ready for the next milestone.</p>
+              <p>{sources.join(", ") || "No sources loaded yet"}</p>
+              <p>Last updated: {lastScraped}</p>
+              <p>CSV and JSON are generated by the Python scraper.</p>
             </div>
           </aside>
         </section>
@@ -332,14 +375,28 @@ export default function Home() {
             </p>
           </div>
 
+          {isLoading ? (
+            <div className="rounded-lg border border-slate-200 bg-white p-8 text-center">
+              <p className="font-semibold text-slate-900">Loading scraped opportunities...</p>
+            </div>
+          ) : null}
+
+          {!isLoading && dataError ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-8 text-center">
+              <p className="font-semibold text-amber-950">Scraped data is not ready yet.</p>
+              <p className="mt-2 text-sm text-amber-800">{dataError}</p>
+            </div>
+          ) : null}
+
           <div className="grid gap-4 lg:grid-cols-2">
             {visibleOpportunities.map((opportunity) => {
               const remainingDays = daysUntil(opportunity.deadline);
-              const isClosingSoon = remainingDays <= 10;
+              const isClosingSoon =
+                remainingDays !== null && remainingDays >= 0 && remainingDays <= 10;
 
               return (
                 <article
-                  key={`${opportunity.title}-${opportunity.deadline}`}
+                  key={`${opportunity.title}-${opportunity.link}`}
                   className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/40"
                 >
                   <div className="flex flex-col gap-4">
@@ -347,13 +404,8 @@ export default function Home() {
                       <div className="min-w-0">
                         <div className="mb-3 flex flex-wrap gap-2">
                           <span className="rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                            {opportunity.category}
+                            {opportunity.category || "Opportunity"}
                           </span>
-                          {opportunity.featured ? (
-                            <span className="rounded-md bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700">
-                              Featured
-                            </span>
-                          ) : null}
                           {isClosingSoon ? (
                             <span className="rounded-md bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
                               Closing soon
@@ -364,11 +416,11 @@ export default function Home() {
                           {opportunity.title}
                         </h3>
                         <p className="mt-1 text-sm font-medium text-slate-500">
-                          {opportunity.organization}
+                          {opportunity.organization || opportunity.source}
                         </p>
                       </div>
                       <a
-                        href={opportunity.link}
+                        href={opportunity.link || opportunity.source_url}
                         target="_blank"
                         rel="noreferrer"
                         className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
@@ -379,30 +431,36 @@ export default function Home() {
                       </a>
                     </div>
 
-                    <p className="text-sm leading-6 text-slate-600">{opportunity.description}</p>
+                    <p className="text-sm leading-6 text-slate-600">
+                      {opportunity.description || "Description not available from source."}
+                    </p>
 
                     <div className="grid gap-3 border-t border-slate-100 pt-4 text-sm text-slate-600 sm:grid-cols-2">
                       <div className="flex items-center gap-2">
                         <CalendarDays size={17} className="text-slate-400" aria-hidden="true" />
-                        <span>{dateFormatter.format(new Date(opportunity.deadline))}</span>
+                        <span>{deadlineLabel(opportunity.deadline)}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <Clock3 size={17} className="text-slate-400" aria-hidden="true" />
-                        <span>{remainingDays} days left</span>
+                        <span>{countdownLabel(opportunity.deadline)}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <MapPin size={17} className="text-slate-400" aria-hidden="true" />
-                        <span>{opportunity.location}</span>
+                        <span>{opportunity.location || "Location not listed"}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <Globe2 size={17} className="text-slate-400" aria-hidden="true" />
-                        <span>{opportunity.subject}</span>
+                        <span>{opportunity.subject_area || "General"}</span>
                       </div>
                     </div>
 
                     <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-                      <span className="text-slate-500">Grades {opportunity.grades}</span>
-                      <span className="font-medium text-slate-700">Source: {opportunity.source}</span>
+                      <span className="text-slate-500">
+                        Grades {opportunity.grade_level || "High School"}
+                      </span>
+                      <span className="font-medium text-slate-700">
+                        Source: {opportunity.source}
+                      </span>
                     </div>
                   </div>
                 </article>
@@ -410,7 +468,7 @@ export default function Home() {
             })}
           </div>
 
-          {visibleOpportunities.length === 0 ? (
+          {!isLoading && !dataError && visibleOpportunities.length === 0 ? (
             <div className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center">
               <p className="font-semibold text-slate-900">No matches yet.</p>
               <p className="mt-2 text-sm text-slate-500">

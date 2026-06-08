@@ -12,8 +12,11 @@ import {
   MapPin,
   Search,
   SlidersHorizontal,
+  BookmarkPlus,
+  BookmarkCheck,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 type Opportunity = {
   title: string;
@@ -148,6 +151,10 @@ export default function Home() {
   const [subject, setSubject] = useState("All");
   const [sortSoonest, setSortSoonest] = useState(true);
 
+  const [user, setUser] = useState<any>(null);
+  const [savedLinks, setSavedLinks] = useState<Set<string>>(new Set());
+  const [isSaving, setIsSaving] = useState(false);
+
   useEffect(() => {
     let isMounted = true;
 
@@ -177,10 +184,77 @@ export default function Home() {
         }
       });
 
+    let authSubscription: any = null;
+
+    if (supabase) {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (isMounted) setUser(session?.user ?? null);
+      });
+      
+      const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (isMounted) setUser(session?.user ?? null);
+      });
+      authSubscription = data.subscription;
+    }
+
     return () => {
       isMounted = false;
+      if (authSubscription) authSubscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    async function fetchSaved() {
+      if (!user || !supabase) return;
+      const { data } = await supabase
+        .from("saved_opportunities")
+        .select("opportunity_link")
+        .eq("user_id", user.id);
+      
+      if (data) {
+        setSavedLinks(new Set(data.map(d => d.opportunity_link)));
+      }
+    }
+    fetchSaved();
+  }, [user]);
+
+  const toggleSave = async (opp: Opportunity) => {
+    if (!user || !supabase || isSaving) return;
+    setIsSaving(true);
+    
+    const linkId = opp.link || opp.source_url;
+    const isSaved = savedLinks.has(linkId);
+
+    if (isSaved) {
+      await supabase
+        .from("saved_opportunities")
+        .delete()
+        .eq("user_id", user.id)
+        .eq("opportunity_link", linkId);
+      
+      setSavedLinks(prev => {
+        const next = new Set(prev);
+        next.delete(linkId);
+        return next;
+      });
+    } else {
+      await supabase
+        .from("saved_opportunities")
+        .insert({
+          user_id: user.id,
+          opportunity_link: linkId,
+          opportunity_data: opp,
+          status: "Interested"
+        });
+        
+      setSavedLinks(prev => {
+        const next = new Set(prev);
+        next.add(linkId);
+        return next;
+      });
+    }
+    setIsSaving(false);
+  };
 
   const categories = useMemo(
     () => ["All", ...uniqueSorted(opportunities.map((opportunity) => opportunity.category))],
@@ -419,16 +493,37 @@ export default function Home() {
                           {opportunity.organization || opportunity.source}
                         </p>
                       </div>
-                      <a
-                        href={opportunity.link || opportunity.source_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
-                        title={`Open ${opportunity.title}`}
-                      >
-                        <ExternalLink size={18} aria-hidden="true" />
-                        <span className="sr-only">Open listing</span>
-                      </a>
+                      <div className="flex items-center gap-2">
+                        {user && (
+                          <button
+                            onClick={() => toggleSave(opportunity)}
+                            disabled={isSaving}
+                            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border transition ${
+                              savedLinks.has(opportunity.link || opportunity.source_url)
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-600 hover:bg-emerald-100"
+                                : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                            } disabled:opacity-50`}
+                            title={savedLinks.has(opportunity.link || opportunity.source_url) ? "Saved to Planner" : "Save to Planner"}
+                          >
+                            {savedLinks.has(opportunity.link || opportunity.source_url) ? (
+                              <BookmarkCheck size={18} aria-hidden="true" />
+                            ) : (
+                              <BookmarkPlus size={18} aria-hidden="true" />
+                            )}
+                            <span className="sr-only">Save to Planner</span>
+                          </button>
+                        )}
+                        <a
+                          href={opportunity.link || opportunity.source_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
+                          title={`Open ${opportunity.title}`}
+                        >
+                          <ExternalLink size={18} aria-hidden="true" />
+                          <span className="sr-only">Open listing</span>
+                        </a>
+                      </div>
                     </div>
 
                     <p className="text-sm leading-6 text-slate-600">

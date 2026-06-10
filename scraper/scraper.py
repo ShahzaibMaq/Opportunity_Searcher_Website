@@ -31,6 +31,7 @@ from common import (  # noqa: E402
     infer_grade_level,
     infer_subject,
     infer_timeline,
+    is_scope_filtered,
     truncate,
 )
 from llm_parser import (  # noqa: E402
@@ -385,6 +386,19 @@ def scrape(
         )
 
     records = dedupe(records)
+    
+    # Filter out-of-scope locations (e.g., CA, FL, TX programs when targeting NJ)
+    filtered_count = 0
+    filtered_records = []
+    for record in records:
+        if is_scope_filtered(record.location):
+            filtered_count += 1
+        else:
+            filtered_records.append(record)
+    
+    if filtered_count > 0:
+        print(f"Filtered out {filtered_count} out-of-scope location opportunity(ies)", file=sys.stderr)
+        records = filtered_records
 
     should_enrich = enrich_with_llm if enrich_with_llm is not None else ollama_up
     if should_enrich and ollama_up:

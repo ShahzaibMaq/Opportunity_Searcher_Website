@@ -75,6 +75,121 @@ def clean_text(value: str | None) -> str:
     return text.replace("T he ", "The ")
 
 
+def standardize_grade_level(grade_text: str) -> str:
+    """Standardize grade level to consistent format.
+    
+    Converts various formats to: "Grade 9-12", "Grade 10-12", etc.
+    or "Grade Freshman-Senior", "Grade Junior-Senior", etc.
+    """
+    if not grade_text:
+        return "High School"
+    
+    text = clean_text(grade_text).lower()
+    
+    # Map common patterns to standard formats
+    grade_mapping = {
+        # Age-based to grade mapping
+        r"15|9(?:th)?.*grade|freshman": "Freshman",
+        r"16|10(?:th)?.*grade|sophomore": "Sophomore",
+        r"17|11(?:th)?.*grade|junior": "Junior",
+        r"18|12(?:th)?.*grade|senior": "Senior",
+    }
+    
+    # Extract individual grade levels/ages mentioned
+    grades = set()
+    
+    # Check for explicit grade years (9-12, 10-12, etc.) or ages (14-18, etc.)
+    age_match = re.search(r"(\d{1,2})[–-](\d{1,2})", text)
+    if age_match:
+        start_val, end_val = int(age_match.group(1)), int(age_match.group(2))
+        
+        # If these are grade numbers (typically 9-12)
+        if 8 <= start_val <= 12 and 8 <= end_val <= 12:
+            return f"Grade {start_val}-{end_val}"
+        
+        # If these are ages (14-18), convert to grades
+        if 14 <= start_val <= 18 and 14 <= end_val <= 18:
+            # Age 14 = Grade 9, 15 = 10, 16 = 11, 17 = 12, 18 = 12
+            grade_start = max(9, start_val - 5)
+            grade_end = min(12, end_val - 5)
+            if grade_start != grade_end:
+                return f"Grade {grade_start}-{grade_end}"
+            else:
+                return f"Grade {grade_end}"
+    
+    # Check for grade labels
+    grade_labels = ["freshman", "sophomore", "junior", "senior"]
+    found_grades = [g for g in grade_labels if g in text]
+    
+    if found_grades:
+        if "freshman" in found_grades or "9" in text or "freshman" in text:
+            if "senior" in found_grades or "12" in text or ("senior" in text and "rising" not in text):
+                return "Grade 9-12"
+            elif "junior" in found_grades or "11" in text:
+                return "Grade 9-11"
+            elif "sophomore" in found_grades or "10" in text:
+                return "Grade 9-10"
+        
+        if "junior" in found_grades and "senior" in found_grades:
+            return "Grade 11-12"
+        elif "junior" in found_grades:
+            return "Grade 11-12"  # Most juniors programs also include seniors
+        elif "senior" in found_grades:
+            return "Grade 12"
+    
+    # Check for age patterns (16+, 17+, etc.)
+    age_min_match = re.search(r"(?:age|aged?\s+)?(\d{2})\+", text)
+    if age_min_match:
+        age = int(age_min_match.group(1))
+        if age <= 16:
+            return "Grade 10-12"
+        elif age <= 17:
+            return "Grade 11-12"
+        else:
+            return "Grade 12"
+    
+    # Default
+    if any(word in text for word in ["high school", "secondary", "secondary school"]):
+        return "High School"
+    
+    return "High School"
+
+
+def is_scope_filtered(location: str) -> bool:
+    """Check if location should be filtered out (non-NJ opportunities).
+    
+    For now, only include US/NJ opportunities, mark global/virtual as acceptable.
+    Filter out state-specific opportunities outside NJ.
+    """
+    if not location:
+        return False
+    
+    location_lower = location.lower()
+    
+    # Accept these locations
+    accept_patterns = [
+        r"new jersey|nj|united states|us|america|global|virtual|remote|online",
+        r"new york|ny",  # Adjacent state - keep for now
+        r"pennsylvania|pa",  # Adjacent state
+    ]
+    
+    # Reject specific out-of-scope states
+    reject_patterns = [
+        r"\b(california|ca|florida|fl|texas|tx|oregon|or|washington|wa|colorado|co)\b",
+    ]
+    
+    for pattern in accept_patterns:
+        if re.search(pattern, location_lower):
+            return False
+    
+    for pattern in reject_patterns:
+        if re.search(pattern, location_lower):
+            return True
+    
+    # Unknown locations - include them (they might be NJ-based)
+    return False
+
+
 def truncate(text: str, max_length: int = 500) -> str:
     text = clean_text(text)
     if len(text) <= max_length:
@@ -318,12 +433,16 @@ def enrich_opportunity_fields(opportunity: Opportunity) -> Opportunity:
 
     deadline = opportunity.deadline or metadata.get("deadline") or infer_deadline(description)
     timeline = opportunity.timeline or metadata.get("timeline") or infer_timeline(description)
-    grade_level = (
+    
+    # Extract and standardize grade level
+    raw_grade = (
         opportunity.grade_level
         if opportunity.grade_level and opportunity.grade_level != "High School"
         else metadata.get("ages")
         or infer_grade_level(description, opportunity.grade_level or "High School")
     )
+    grade_level = standardize_grade_level(raw_grade)
+    
     location = metadata.get("location") or opportunity.location
     
     # Clean up description by removing redundant metadata

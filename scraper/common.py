@@ -353,37 +353,60 @@ def infer_location_from_metadata(description: str, fallback: str) -> str:
 def _strip_metadata_from_description(text: str) -> str:
     """Remove all structured field metadata from description text.
     
-    Handles both inline metadata (e.g., "Format: Summer", "Cost: Free")
-    and prefix metadata (e.g., "Ages: X Location: Y Timeline: Z Description here...")
+    Aggressively removes:
+    - Prefix metadata: "Ages: X Location: Y Timeline: Z Description here..."
+    - Inline fields: "Best for: X", "Cost: Free", etc.
+    - Trailing metadata fragments
     """
     if not text:
         return text
     
     cleaned = clean_text(text)
-    
-    # First, try to find where actual description content starts
-    # by looking for the first substantial sentence (after metadata prefix)
-    
-    # Split by newlines and spaces to find metadata sections
-    lines = cleaned.split("\n")
     result = cleaned
     
-    # Pattern for prefix metadata: "Field: value Field2: value2 ... Description starts here"
-    # Remove all consecutive "Field: value" patterns from the start
-    prefix_pattern = r"^(?:(?:Ages|Location|Timeline|Deadline|Format|Length|Cost|Eligibility|Application Deadline|Best for|What you do):\s*[^\n]*?\s+)*"
-    result = re.sub(prefix_pattern, "", result, flags=re.IGNORECASE)
+    # First pass: Remove all metadata field markers and their values
+    # This is aggressive - removes "FieldName: value" patterns wherever they appear
+    metadata_fields = [
+        "Ages", "Location", "Timeline", "Deadline", "Format", "Length",
+        "Cost", "Eligibility", "Application Deadline", "Best for", "What you do"
+    ]
     
-    # Second, remove inline metadata fields that appear in the middle/end of text
-    # These look like "... content Eligibility: something Best for: something Description continues..."
-    inline_pattern = r"\s+(?:Best for|What you do|Eligibility|Format|Length|Cost):\s*[^\n.!?]*(?=[A-Z][a-z]|\s+[A-Z]{2,}|$)"
-    result = re.sub(inline_pattern, " ", result, flags=re.IGNORECASE)
+    # Build pattern that matches any of these fields with their values
+    for field in metadata_fields:
+        # Match "Field: value" where value goes until end of sentence or next field
+        # This captures things like "Deadline: January 10" or "Cost: Free"
+        pattern = rf"\b{re.escape(field)}:\s*[^\n.!?]*(?=\b(?:{'|'.join(metadata_fields)})\b|\.|\!|\?|$)"
+        result = re.sub(pattern, " ", result, flags=re.IGNORECASE)
     
-    # Clean up extra whitespace
+    # Second pass: Clean up common metadata remnants that appear after field removal
+    # Remove trailing date/timeline-like fragments from the start
+    # e.g., "spring, fall, or winter Deadline: Various StandOut Connect..."
+    # becomes "StandOut Connect..."
+    
+    # Look for actual content start indicators (subject + verb)
+    content_starters = [
+        r"(?i)\b[A-Z][a-z]+\s+(?:is|are|provides|offers|helps|includes|features|allows|welcomes|seeks|invites|welcomes|looks|seeks)",
+        r"(?i)^(?:this|the|an?)\s+(?:program|opportunity|internship|experience|research|scholarship)",
+        r"(?i)students?\s+(?:will|can|learn|gain|work|participate)",
+    ]
+    
+    for pattern in content_starters:
+        match = re.search(pattern, result)
+        if match and match.start() > 5:  # Some content removed
+            result = result[match.start():]
+            break
+    
+    # Clean up multiple spaces
     result = re.sub(r"\s+", " ", result).strip()
     
-    # Safety check: if we removed too much, return original
-    if len(result) < 15 and len(cleaned) > 50:
-        return cleaned
+    # Safety: if we removed too much, return a truncated original
+    if len(result) < 20 and len(cleaned) > 100:
+        # Try a gentler approach
+        result = cleaned
+        for field in metadata_fields:
+            pattern = rf"^(?:\b{re.escape(field)}:\s*[^\n]*?\s+)*"
+            result = re.sub(pattern, "", result, flags=re.IGNORECASE)
+        result = re.sub(r"\s+", " ", result).strip()
     
     return result if result else cleaned
 

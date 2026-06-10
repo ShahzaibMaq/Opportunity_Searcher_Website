@@ -415,18 +415,44 @@ def scrape(
 def write_csv(records: list[Opportunity], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = [asdict(record) for record in records]
-    fieldnames = list(asdict(records[0]).keys()) if records else list(Opportunity.__dataclass_fields__)
-
+    
+    # Minimalist CSV: kept subject_area and timeline for functionality,
+    # removed source, source_url, scraped_at
+    fieldnames = ["title", "organization", "category", "location", "grade_level", "deadline", "description", "link", "subject_area", "timeline"]
+    
     with path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(rows)
+        for row in rows:
+            minimal_row = {field: row.get(field, "") for field in fieldnames}
+            writer.writerow(minimal_row)
 
 
 def write_json(records: list[Opportunity], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Create minimalist JSON with essential fields
+    # Removed: source, source_url, scraped_at (not needed in frontend)
+    # Kept: subject_area (for filtering), timeline (for display)
+    minimal_records = []
+    for record in records:
+        minimal_records.append({
+            "title": record.title,
+            "organization": record.organization,
+            "category": record.category,
+            "location": record.location,
+            "grade_level": record.grade_level,
+            "deadline": record.deadline,
+            "description": record.description,
+            "link": record.link,
+            "subject_area": record.subject_area or "",
+            "timeline": record.timeline or "",
+        })
+    
     with path.open("w", encoding="utf-8") as file:
-        json.dump([asdict(record) for record in records], file, indent=2, ensure_ascii=False)
+        json.dump(minimal_records, file, indent=2, ensure_ascii=False)
+
+
 
 
 def upload_to_supabase(records: list[Opportunity]) -> None:

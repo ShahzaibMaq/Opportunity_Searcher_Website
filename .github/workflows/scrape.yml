@@ -28,6 +28,21 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_TABLE: opportunities
 
+      - name: Configure git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action Bot"
+
+      - name: Commit and push changes
+        run: |
+          if [[ -n $(git status -s) ]]; then
+            git add scraper/output/ frontend/opportunity_searcher/public/data/opportunities.json
+            git commit -m "chore: auto-update opportunities data from daily scrape"
+            git push
+          else
+            echo "No changes detected, skipping commit"
+          fi
+
       - name: Upload scraped data artifact
         uses: actions/upload-artifact@v4
         with:
@@ -35,3 +50,4 @@ jobs:
           path: |
             scraper/output/
             frontend/opportunity_searcher/public/data/opportunities.json
+

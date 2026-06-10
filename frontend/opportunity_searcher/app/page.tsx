@@ -23,15 +23,15 @@ type Opportunity = {
   organization: string;
   category: string;
   location: string;
-  subject_area: string;
+  subject_area?: string;
   deadline: string;
-  timeline: string;
+  timeline?: string;
   grade_level: string;
   description: string;
   link: string;
-  source: string;
-  source_url: string;
-  scraped_at: string;
+  source?: string;
+  source_url?: string;
+  scraped_at?: string;
 };
 
 const dateFormatter = new Intl.DateTimeFormat("en", {

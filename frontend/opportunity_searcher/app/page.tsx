@@ -25,6 +25,7 @@ type Opportunity = {
   location: string;
   subject_area: string;
   deadline: string;
+  timeline: string;
   grade_level: string;
   description: string;
   link: string;
@@ -79,14 +80,22 @@ function daysUntil(deadline: string) {
 }
 
 function deadlineLabel(deadline: string) {
+  if (!deadline) {
+    return "Deadline not listed";
+  }
+
   const parsed = parseDeadline(deadline);
-  return parsed ? dateFormatter.format(parsed) : "Deadline not listed";
+  return parsed ? dateFormatter.format(parsed) : deadline;
 }
 
 function countdownLabel(deadline: string) {
+  if (!deadline) {
+    return "Deadline not listed";
+  }
+
   const days = daysUntil(deadline);
   if (days === null) {
-    return "Deadline not listed";
+    return deadline;
   }
   if (days < 0) {
     return "Deadline passed";
@@ -537,7 +546,11 @@ export default function Home() {
                       </div>
                       <div className="flex items-center gap-2">
                         <Clock3 size={17} className="text-slate-400" aria-hidden="true" />
-                        <span>{countdownLabel(opportunity.deadline)}</span>
+                        <span>
+                          {opportunity.timeline
+                            ? `Runs: ${opportunity.timeline}`
+                            : countdownLabel(opportunity.deadline)}
+                        </span>
                       </div>
                       <div className="flex items-center gap-2">
                         <MapPin size={17} className="text-slate-400" aria-hidden="true" />

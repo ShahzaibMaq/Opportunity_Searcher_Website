@@ -1,10 +1,14 @@
 # Scraper
 
-Scrapes the first opportunity sources for the project:
+Scrapes opportunity sources for the project:
 
-- StandOut Connect New Jersey internship article
-- Extracurriculars.org Typesense opportunity database
-- College Transitions research opportunities article
+- **StandOut Connect** — custom HTML parser + optional LLM page extraction
+- **College Transitions** — custom HTML parser + optional LLM page extraction
+- **Extracurriculars.org** — Typesense API + optional LLM enrichment for missing fields
+
+Structured fields (`Deadline`, `Timeline`, `Ages`, `Location`) are parsed from listing
+text automatically. When Ollama is running, LLM page scraping and enrichment fill
+remaining gaps (e.g. extracurriculars without listed dates).
 
 ## Manual Run
 
@@ -19,15 +23,29 @@ Outputs:
 - `scraper/output/opportunities.json`
 - `frontend/opportunity_searcher/public/data/opportunities.json`
 
-The frontend reads the public JSON file, so rerunning the scraper refreshes the
-website data.
+## Free AI Scraping (Ollama)
+
+```bash
+# 1. Install Ollama from https://ollama.com
+# 2. Pull a model
+ollama pull llama3.2
+
+# 3. Run with LLM page sources + enrichment
+python scraper/scraper.py --enable-llm
+```
+
+- `scraper/sources.yaml` — LLM page sources (StandOut + College Transitions articles)
+- Extracurriculars.org uses the API; LLM enrichment fills missing deadline/timeline
+- `--skip-llm` — disable all LLM steps
+- Auto-detects Ollama when running locally; GitHub Actions skips LLM when unavailable
+
+Optional env vars (`scraper/.env.example`):
+
+- `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_TIMEOUT`
+- `LLM_MAX_PAGE_CHARS`, `LLM_ENRICHMENT_BATCH_SIZE`
 
 ## Supabase Upload
-
-Copy `scraper/.env.example` to `scraper/.env`, add your Supabase values, and run:
 
 ```bash
 python scraper/scraper.py --upload-supabase
 ```
-
-The default table name is `opportunities`.

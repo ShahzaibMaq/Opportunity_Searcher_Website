@@ -1,0 +1,48 @@
+# LLM page sources (free local Ollama). Extracurriculars.org is scraped via its API
+# in scraper.py; missing fields are filled by the LLM enrichment pass.
+#
+# Setup: https://ollama.com → ollama pull llama3.2 → python scraper/scraper.py
+
+llm_sources:
+  - url: https://www.standoutconnect.org/post/20-internships-for-high-school-students-in-new-jersey
+    source: StandOut Connect
+    defaults:
+      category: Internship
+      location: New Jersey
+      subject: General
+
+  - url: https://www.collegetransitions.com/blog/research-opportunities-for-high-school-students/
+    source: College Transitions
+    defaults:
+      category: Research
+      location: United States
+      subject: STEM
+
+  # Additional test sources
+  - url: https://www.collegetransitions.com/blog/summer-internships-for-high-school-students/
+    source: College Transitions
+    defaults:
+      category: Internship
+      location: United States
+      subject: General
+
+  - url: https://www.collegetransitions.com/blog/scholarships-for-high-school-students/
+    source: College Transitions
+    defaults:
+      category: Scholarship
+      location: United States
+      subject: General
+
+  - url: https://blog.prepscholar.com/high-school-summer-programs
+    source: PrepScholar
+    defaults:
+      category: Summer Program
+      location: United States
+      subject: General
+
+  - url: https://www.aaas.org/programs/workforce-development/summer-internships
+    source: AAAS
+    defaults:
+      category: Internship
+      location: United States
+      subject: STEM

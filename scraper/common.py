@@ -235,61 +235,84 @@ def infer_location_from_metadata(description: str, fallback: str) -> str:
     return metadata.get("location") or fallback
 
 
-def _strip_metadata_prefix(text: str) -> str:
-    """Remove structured field metadata from the beginning of description text.
+def _strip_metadata_from_description(text: str) -> str:
+    """Remove all structured field metadata from description text.
     
-    Metadata appears as "Field: value" patterns at the start and should be removed.
-    Example: "Ages: 15-19 Location: Virtual Timeline: Summer Deadline: Various Main text here..."
-    becomes: "Main text here..."
+    Handles both inline metadata (e.g., "Format: Summer", "Cost: Free")
+    and prefix metadata (e.g., "Ages: X Location: Y Timeline: Z Description here...")
     """
     if not text:
         return text
     
     cleaned = clean_text(text)
     
-    # First, try extracting metadata to understand what's there
-    metadata = extract_listing_metadata(cleaned)
+    # First, try to find where actual description content starts
+    # by looking for the first substantial sentence (after metadata prefix)
     
-    # If we found metadata, look for where the actual description content starts
-    # by searching for common sentence openers/verbs that indicate content start
-    content_indicators = [
-        r"provides",
-        r"offers",
-        r"helps",
-        r"is a",
-        r"are",
-        r"was",
-        r"were",
-        r"participat",
-        r"student",
-        r"program",
-        r"opportunity",
-        r"include",
-        r"feature",
-        r"allow",
-        r"pairs",
-        r"introduce",
+    # Split by newlines and spaces to find metadata sections
+    lines = cleaned.split("\n")
+    result = cleaned
+    
+    # Pattern for prefix metadata: "Field: value Field2: value2 ... Description starts here"
+    # Remove all consecutive "Field: value" patterns from the start
+    prefix_pattern = r"^(?:(?:Ages|Location|Timeline|Deadline|Format|Length|Cost|Eligibility|Application Deadline|Best for|What you do):\s*[^\n]*?\s+)*"
+    result = re.sub(prefix_pattern, "", result, flags=re.IGNORECASE)
+    
+    # Second, remove inline metadata fields that appear in the middle/end of text
+    # These look like "... content Eligibility: something Best for: something Description continues..."
+    inline_pattern = r"\s+(?:Best for|What you do|Eligibility|Format|Length|Cost):\s*[^\n.!?]*(?=[A-Z][a-z]|\s+[A-Z]{2,}|$)"
+    result = re.sub(inline_pattern, " ", result, flags=re.IGNORECASE)
+    
+    # Clean up extra whitespace
+    result = re.sub(r"\s+", " ", result).strip()
+    
+    # Safety check: if we removed too much, return original
+    if len(result) < 15 and len(cleaned) > 50:
+        return cleaned
+    
+    return result if result else cleaned
+
+
+def _fix_data_errors(opportunity: Opportunity) -> Opportunity:
+    """Fix common data entry errors."""
+    title = opportunity.title
+    description = opportunity.description
+    organization = opportunity.organization
+    
+    # Fix: Congressman -> Senator for Cory Booker
+    if "congressman" in title.lower() and "cory booker" in title.lower():
+        title = re.sub(r"Congressman", "Senator", title)
+        organization = re.sub(r"Congressman", "Senator", organization)
+    
+    # Fix character encoding issues using raw string patterns
+    # Smart quotes and dashes from web content
+    patterns = [
+        (r"[\u201c\u201d]", '"'),   # Curly quotes to straight quotes
+        (r"[\u2018\u2019]", "'"),   # Curly apostrophes to straight
+        (r"[\u2013\u2014]", "-"),   # En/em dashes to hyphen
     ]
     
-    # Find the earliest position of any content indicator
-    earliest_pos = len(cleaned)
-    for indicator in content_indicators:
-        match = re.search(indicator, cleaned, re.IGNORECASE)
-        if match:
-            earliest_pos = min(earliest_pos, match.start())
+    for pattern, replacement in patterns:
+        title = re.sub(pattern, replacement, title)
+        description = re.sub(pattern, replacement, description)
+        organization = re.sub(pattern, replacement, organization)
     
-    # If we found a content indicator, cut everything before it
-    if earliest_pos > 0 and earliest_pos < len(cleaned):
-        result = cleaned[earliest_pos:].lstrip()
-        # Make sure we're not cutting off important text
-        if len(result) > 20:  # At least some meaningful content
-            return clean_text(result)
+    # Fix missing spaces after commas in locations
+    title = re.sub(r"(\w),(\w)", r"\1, \2", title)
     
-    return clean_text(cleaned)
+    if (title != opportunity.title or 
+        description != opportunity.description or 
+        organization != opportunity.organization):
+        return replace(opportunity, title=title, description=description, organization=organization)
+    
+    return opportunity
 
 
 def enrich_opportunity_fields(opportunity: Opportunity) -> Opportunity:
-    """Fill missing fields from structured description text."""
+    """Fill missing fields from structured description text and clean up data errors."""
+    # First, fix data errors
+    opportunity = _fix_data_errors(opportunity)
+    
     description = opportunity.description
     metadata = extract_listing_metadata(description)
 
@@ -303,8 +326,8 @@ def enrich_opportunity_fields(opportunity: Opportunity) -> Opportunity:
     )
     location = metadata.get("location") or opportunity.location
     
-    # Clean up description by removing redundant metadata prefix
-    cleaned_description = _strip_metadata_prefix(description)
+    # Clean up description by removing redundant metadata
+    cleaned_description = _strip_metadata_from_description(description)
 
     return replace(
         opportunity,
@@ -317,30 +340,79 @@ def enrich_opportunity_fields(opportunity: Opportunity) -> Opportunity:
 
 
 def opportunity_richness(opportunity: Opportunity) -> int:
+    """Score opportunity for data completeness. Higher score = better data."""
     score = 0
-    for value in (
-        opportunity.deadline,
-        opportunity.timeline,
-        opportunity.description,
-        opportunity.subject_area,
-        opportunity.grade_level,
-        opportunity.organization,
-    ):
-        if clean_text(value):
-            score += 1
+    
+    # Core fields (all have equal weight now)
+    if clean_text(opportunity.deadline) and opportunity.deadline != "Contact for deadline":
+        score += 2  # Boost for real deadlines
+    else:
+        score += 1
+    
+    if clean_text(opportunity.timeline):
+        score += 1
+        
+    if clean_text(opportunity.description) and len(opportunity.description) > 100:
+        score += 2  # Boost for longer, more detailed descriptions
+    elif clean_text(opportunity.description):
+        score += 1
+        
+    if clean_text(opportunity.subject_area):
+        score += 1
+        
+    if clean_text(opportunity.grade_level):
+        score += 1
+        
+    if clean_text(opportunity.organization) and opportunity.organization != opportunity.title:
+        score += 1  # Different org means better data
+    
     return score
 
 
-def dedupe(opportunities: Iterable[Opportunity]) -> list[Opportunity]:
-    best: dict[tuple[str, str], Opportunity] = {}
+def _normalize_title(title: str) -> str:
+    """Normalize title for similarity matching."""
+    return re.sub(r"\s+", " ", title.lower()).strip()
 
+
+def dedupe(opportunities: Iterable[Opportunity]) -> list[Opportunity]:
+    """Remove duplicates, preferring entries with richer data."""
+    best: dict[tuple[str, str], Opportunity] = {}
+    by_title: dict[str, list[Opportunity]] = {}
+    
+    # First pass: exact match on title + link
     for opportunity in opportunities:
         key = (opportunity.title.lower(), opportunity.link.lower())
         existing = best.get(key)
         if existing is None or opportunity_richness(opportunity) > opportunity_richness(existing):
             best[key] = opportunity
-
-    return list(best.values())
+        
+        # Track by normalized title for fuzzy matching
+        norm_title = _normalize_title(opportunity.title)
+        if norm_title not in by_title:
+            by_title[norm_title] = []
+        by_title[norm_title].append(opportunity)
+    
+    # Second pass: find near-duplicates with same title but different sources
+    deduplicated = list(best.values())
+    seen_titles: dict[str, Opportunity] = {}
+    
+    final_list = []
+    for opp in deduplicated:
+        norm_title = _normalize_title(opp.title)
+        
+        if norm_title in seen_titles:
+            existing = seen_titles[norm_title]
+            # Keep the one with richer data
+            if opportunity_richness(opp) > opportunity_richness(existing):
+                # Replace existing with this one
+                final_list = [o for o in final_list if _normalize_title(o.title) != norm_title]
+                final_list.append(opp)
+                seen_titles[norm_title] = opp
+        else:
+            final_list.append(opp)
+            seen_titles[norm_title] = opp
+    
+    return final_list
 
 
 def normalize_category(value: str, title: str, description: str, fallback: str) -> str:

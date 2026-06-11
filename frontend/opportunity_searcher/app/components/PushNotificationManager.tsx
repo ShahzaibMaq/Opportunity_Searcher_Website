@@ -59,6 +59,15 @@ export function PushNotificationManager({ user }: { user: User }) {
     return outputArray;
   }
 
+  async function showBrowserNotification(title: string, body: string) {
+    const registration = await navigator.serviceWorker.ready;
+    await registration.showNotification(title, {
+      body,
+      icon: "/favicon.ico",
+      badge: "/favicon.ico",
+    });
+  }
+
   async function enableBrowserAlerts(message = "Browser deadline alerts are enabled while this site is open.") {
     if (!("Notification" in window)) {
       throw new Error("Browser notifications are not supported in this browser.");
@@ -76,12 +85,26 @@ export function PushNotificationManager({ user }: { user: User }) {
     window.localStorage.setItem(LOCAL_ALERTS_KEY, "true");
     setHasBrowserAlerts(true);
 
-    const registration = await navigator.serviceWorker.ready;
-    await registration.showNotification("Deadline alerts enabled", {
-      body: message,
-      icon: "/favicon.ico",
-      badge: "/favicon.ico",
-    });
+    await showBrowserNotification("Deadline alerts enabled", message);
+  }
+
+  async function sendTestNotification() {
+    setIsLoading(true);
+    try {
+      if (Notification.permission !== "granted") {
+        await enableBrowserAlerts();
+      }
+
+      await showBrowserNotification(
+        "Test deadline alert",
+        "Notifications are working in this browser for Alumni - Aspirations.",
+      );
+      setErrorMessage("Test notification sent.");
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "Could not send a test notification.");
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   async function subscribe() {
@@ -174,17 +197,28 @@ export function PushNotificationManager({ user }: { user: User }) {
         <p className="text-sm font-semibold text-zinc-900">Deadline alerts</p>
         <p className="text-xs text-zinc-500">{errorMessage || "Get notified when an opportunity is closing soon."}</p>
       </div>
-      <button
-        onClick={alertsEnabled ? unsubscribe : subscribe}
-        disabled={isLoading}
-        className={`flex min-w-[100px] items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition ${
-          alertsEnabled 
-            ? "border border-zinc-200 text-zinc-600 hover:bg-zinc-50"
-            : "bg-teal-800 text-white"
-        } disabled:opacity-50`}
-      >
-        {isLoading ? <Loader2 size={16} className="animate-spin" /> : (alertsEnabled ? "Disable" : "Enable")}
-      </button>
+      <div className="flex gap-2">
+        {alertsEnabled ? (
+          <button
+            onClick={sendTestNotification}
+            disabled={isLoading}
+            className="flex min-w-[72px] items-center justify-center gap-2 rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-50"
+          >
+            Test
+          </button>
+        ) : null}
+        <button
+          onClick={alertsEnabled ? unsubscribe : subscribe}
+          disabled={isLoading}
+          className={`flex min-w-[100px] items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition ${
+            alertsEnabled 
+              ? "border border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+              : "bg-teal-800 text-white"
+          } disabled:opacity-50`}
+        >
+          {isLoading ? <Loader2 size={16} className="animate-spin" /> : (alertsEnabled ? "Disable" : "Enable")}
+        </button>
+      </div>
     </div>
   );
 }

@@ -39,6 +39,7 @@ create table if not exists public.saved_opportunities (
   opportunity_link text not null,
   opportunity_data jsonb not null,
   status text not null default 'Interested',
+  custom_deadline_date date,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (user_id, opportunity_link)
@@ -59,6 +60,9 @@ add column if not exists updated_at timestamptz not null default now();
 
 alter table public.saved_opportunities
 add column if not exists updated_at timestamptz not null default now();
+
+alter table public.saved_opportunities
+add column if not exists custom_deadline_date date;
 
 alter table public.push_subscriptions
 add column if not exists updated_at timestamptz not null default now();

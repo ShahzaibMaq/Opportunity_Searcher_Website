@@ -7,13 +7,14 @@ import { Clock3, ExternalLink, CalendarDays, KanbanSquare, ListTodo, Trash2, Map
 import { PushNotificationManager } from "../components/PushNotificationManager";
 import type { User } from "@supabase/supabase-js";
 import type { Opportunity } from "@/lib/opportunities";
-import { parseDeadline } from "@/lib/opportunities";
+import { countdownLabel, deadlineLabel, inferredDeadlineText, parseDeadline } from "@/lib/opportunities";
 
 type SavedOpportunity = {
   id: string;
   opportunity_link: string;
   opportunity_data: Opportunity;
   status: string;
+  custom_deadline_date?: string | null;
   created_at: string;
 };
 
@@ -95,6 +96,27 @@ export default function PlannerPage() {
     }
   }
 
+  async function updateCustomDeadline(id: string, customDeadlineDate: string) {
+    if (!supabase) return;
+    const original = [...savedItems];
+    const nextDate = customDeadlineDate || null;
+    setSavedItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, custom_deadline_date: nextDate } : item)),
+    );
+
+    const { error } = await supabase
+      .from("saved_opportunities")
+      .update({ custom_deadline_date: nextDate })
+      .eq("id", id);
+
+    if (error) {
+      setSavedItems(original);
+      setErrorMessage(error.message);
+    } else {
+      setErrorMessage("");
+    }
+  }
+
   async function deleteItem(id: string) {
     if (!supabase) return;
     if (!confirm("Remove this opportunity from your planner?")) return;
@@ -134,15 +156,20 @@ export default function PlannerPage() {
 
   const getItemsByStatus = (status: string) => savedItems.filter(item => item.status === status);
 
+  const opportunityForDeadline = (item: SavedOpportunity): Opportunity => ({
+    ...item.opportunity_data,
+    deadline_date: item.custom_deadline_date || item.opportunity_data.deadline_date,
+  });
+
   const upcomingDeadlines = [...savedItems]
-    .filter((item) => parseDeadline(item.opportunity_data))
+    .filter((item) => parseDeadline(opportunityForDeadline(item)))
     .sort((a, b) => {
-      const dateA = parseDeadline(a.opportunity_data)?.getTime() ?? 0;
-      const dateB = parseDeadline(b.opportunity_data)?.getTime() ?? 0;
+      const dateA = parseDeadline(opportunityForDeadline(a))?.getTime() ?? 0;
+      const dateB = parseDeadline(opportunityForDeadline(b))?.getTime() ?? 0;
       return dateA - dateB;
     })
     .filter((item) => {
-      const deadline = parseDeadline(item.opportunity_data);
+      const deadline = parseDeadline(opportunityForDeadline(item));
       return deadline && deadline.getTime() > todayTime - 86400000;
     });
 
@@ -188,7 +215,10 @@ export default function PlannerPage() {
                   </span>
                 </div>
                 <div className="flex flex-col gap-3 min-h-[200px] rounded-xl bg-slate-100/50 p-2 border border-slate-200 border-dashed">
-                  {getItemsByStatus(status).map(item => (
+                  {getItemsByStatus(status).map(item => {
+                    const deadlineOpportunity = opportunityForDeadline(item);
+
+                    return (
                     <div key={item.id} className="group relative flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md">
                       <div>
                         <h3 className="font-semibold text-slate-900 line-clamp-2" title={item.opportunity_data.title}>
@@ -205,12 +235,22 @@ export default function PlannerPage() {
                         )}
                       </div>
                       
-                      {item.opportunity_data.deadline && (
+                      {inferredDeadlineText(deadlineOpportunity) && (
                         <div className="flex items-center gap-1.5 text-xs text-slate-500">
                           <Clock3 size={14} />
-                          <span>{item.opportunity_data.deadline}</span>
+                          <span>{deadlineLabel(deadlineOpportunity)}</span>
                         </div>
                       )}
+
+                      <label className="grid gap-1 text-xs font-medium text-slate-500">
+                        Planner deadline
+                        <input
+                          type="date"
+                          value={item.custom_deadline_date ?? ""}
+                          onChange={(event) => updateCustomDeadline(item.id, event.target.value)}
+                          className="h-8 rounded-md border border-slate-200 px-2 text-xs text-slate-700 outline-none focus:border-teal-700"
+                        />
+                      </label>
 
                       <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-3">
                         <select
@@ -236,7 +276,8 @@ export default function PlannerPage() {
                         </div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                   {getItemsByStatus(status).length === 0 && (
                     <div className="flex h-full items-center justify-center p-4">
                       <p className="text-xs text-slate-400">No items</p>
@@ -255,7 +296,10 @@ export default function PlannerPage() {
                 <p className="mt-1 text-sm text-slate-500">Saved opportunities with future deadlines will appear here.</p>
               </div>
             ) : (
-              upcomingDeadlines.map(item => (
+              upcomingDeadlines.map(item => {
+                const deadlineOpportunity = opportunityForDeadline(item);
+
+                return (
                 <div key={item.id} className="flex gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                   <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
                     <CalendarDays size={20} />
@@ -276,12 +320,23 @@ export default function PlannerPage() {
                         {item.status}
                       </span>
                       <span className="text-sm font-semibold text-slate-700">
-                        {item.opportunity_data.deadline}
+                        {deadlineLabel(deadlineOpportunity)}
                       </span>
                     </div>
+                    <p className="mt-1 text-xs text-slate-500">{countdownLabel(deadlineOpportunity)}</p>
+                    <label className="mt-3 grid gap-1 text-xs font-medium text-slate-500">
+                      Planner deadline
+                      <input
+                        type="date"
+                        value={item.custom_deadline_date ?? ""}
+                        onChange={(event) => updateCustomDeadline(item.id, event.target.value)}
+                        className="h-8 rounded-md border border-slate-200 px-2 text-xs text-slate-700 outline-none focus:border-teal-700"
+                      />
+                    </label>
                   </div>
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         )}

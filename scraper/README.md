@@ -44,6 +44,36 @@ Optional env vars (`scraper/.env.example`):
 - `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_TIMEOUT`
 - `LLM_MAX_PAGE_CHARS`, `LLM_ENRICHMENT_BATCH_SIZE`
 
+## Daily Scrape
+
+GitHub Actions runs `.github/workflows/scrape.yml` every day at `11:00 UTC`
+(`7:00 AM Eastern` during daylight time). The workflow installs Ollama, pulls
+`llama3.2`, and runs:
+
+```bash
+python scraper/scraper.py --enable-llm
+```
+
+The workflow commits refreshed JSON/CSV output when the scrape changes the data.
+
+## Adding Websites
+
+Add new AI-assisted page sources to `scraper/sources.yaml`:
+
+```yaml
+llm_sources:
+  - url: https://example.org/high-school-programs
+    source: Example Org
+    defaults:
+      category: Summer Program
+      location: United States
+      subject: General
+```
+
+The next manual or scheduled scraper run will include that page. Use defaults
+as fallbacks only; the scraper still tries to extract the real title, location,
+deadline, timeline, eligibility, and link from the page.
+
 ## Supabase Upload
 
 ```bash

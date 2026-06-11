@@ -1,54 +1,34 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, replace
-from typing import Iterable
-from urllib.parse import urljoin
+from dataclasses import dataclass
+from urllib.parse import urljoin, urlparse
 
-import requests
-from bs4 import BeautifulSoup
 
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from urllib.parse import urljoin, urlparse
+
+
+# Constants
 USER_AGENT = (
     "Mozilla/5.0 (compatible; OpportunitySearcherBot/0.1; "
     "+https://github.com/ShahzaibMaq/Opportunity_Searcher_Website)"
 )
 
-DATE_PATTERN = re.compile(
-    r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
-    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|"
-    r"Dec(?:ember)?)\.?\s+\d{1,2}(?:,\s*\d{4})?\b",
-    re.IGNORECASE,
-)
+EXTRACURRICULARS_API_KEY = "L9EJr1spJTxXQ7zEpN22t64YIForeUiX"
 
-STANDOUT_FIELD_ORDER = ("Ages", "Location", "Timeline", "Deadline")
-COLLEGE_TRANSITIONS_FIELD_ORDER = (
-    "Location",
-    "Format",
-    "Length",
-    "Cost",
-    "Eligibility",
-    "Application Deadline",
-    "Deadline",
-    "Best for",
-    "What you do",
-)
-DESCRIPTION_START = re.compile(
-    r"\s+(?=[A-Z][\w'’-]*(?:\s+[A-Z][\w'’-]*){0,3}\s+"
-    r"(?:is|are|was|were|provides|offers|helps|pairs|introduces|allows|participants|students)\b)",
-    re.IGNORECASE,
-)
-
-ALLOWED_CATEGORIES = frozenset(
-    {
-        "Internship",
-        "Research",
-        "Scholarship",
-        "Competition",
-        "Summer Program",
-        "Volunteering",
-        "Activity",
-    }
-)
+ALLOWED_CATEGORIES = {
+    "Internship",
+    "Summer Program",
+    "Scholarship",
+    "Research",
+    "Competition",
+    "Activity",
+    "Volunteering",
+}
 
 
 @dataclass(frozen=True)
@@ -59,13 +39,15 @@ class Opportunity:
     location: str
     subject_area: str
     deadline: str
-    timeline: str
     grade_level: str
     description: str
     link: str
     source: str
     source_url: str
     scraped_at: str
+    timeline: str = ""
+    deadline_date: str = ""
+    is_active: bool = True
 
 
 def clean_text(value: str | None) -> str:
@@ -75,121 +57,6 @@ def clean_text(value: str | None) -> str:
     return text.replace("T he ", "The ")
 
 
-def standardize_grade_level(grade_text: str) -> str:
-    """Standardize grade level to consistent format.
-    
-    Converts various formats to: "Grade 9-12", "Grade 10-12", etc.
-    or "Grade Freshman-Senior", "Grade Junior-Senior", etc.
-    """
-    if not grade_text:
-        return "High School"
-    
-    text = clean_text(grade_text).lower()
-    
-    # Map common patterns to standard formats
-    grade_mapping = {
-        # Age-based to grade mapping
-        r"15|9(?:th)?.*grade|freshman": "Freshman",
-        r"16|10(?:th)?.*grade|sophomore": "Sophomore",
-        r"17|11(?:th)?.*grade|junior": "Junior",
-        r"18|12(?:th)?.*grade|senior": "Senior",
-    }
-    
-    # Extract individual grade levels/ages mentioned
-    grades = set()
-    
-    # Check for explicit grade years (9-12, 10-12, etc.) or ages (14-18, etc.)
-    age_match = re.search(r"(\d{1,2})[–-](\d{1,2})", text)
-    if age_match:
-        start_val, end_val = int(age_match.group(1)), int(age_match.group(2))
-        
-        # If these are grade numbers (typically 9-12)
-        if 8 <= start_val <= 12 and 8 <= end_val <= 12:
-            return f"Grade {start_val}-{end_val}"
-        
-        # If these are ages (14-18), convert to grades
-        if 14 <= start_val <= 18 and 14 <= end_val <= 18:
-            # Age 14 = Grade 9, 15 = 10, 16 = 11, 17 = 12, 18 = 12
-            grade_start = max(9, start_val - 5)
-            grade_end = min(12, end_val - 5)
-            if grade_start != grade_end:
-                return f"Grade {grade_start}-{grade_end}"
-            else:
-                return f"Grade {grade_end}"
-    
-    # Check for grade labels
-    grade_labels = ["freshman", "sophomore", "junior", "senior"]
-    found_grades = [g for g in grade_labels if g in text]
-    
-    if found_grades:
-        if "freshman" in found_grades or "9" in text or "freshman" in text:
-            if "senior" in found_grades or "12" in text or ("senior" in text and "rising" not in text):
-                return "Grade 9-12"
-            elif "junior" in found_grades or "11" in text:
-                return "Grade 9-11"
-            elif "sophomore" in found_grades or "10" in text:
-                return "Grade 9-10"
-        
-        if "junior" in found_grades and "senior" in found_grades:
-            return "Grade 11-12"
-        elif "junior" in found_grades:
-            return "Grade 11-12"  # Most juniors programs also include seniors
-        elif "senior" in found_grades:
-            return "Grade 12"
-    
-    # Check for age patterns (16+, 17+, etc.)
-    age_min_match = re.search(r"(?:age|aged?\s+)?(\d{2})\+", text)
-    if age_min_match:
-        age = int(age_min_match.group(1))
-        if age <= 16:
-            return "Grade 10-12"
-        elif age <= 17:
-            return "Grade 11-12"
-        else:
-            return "Grade 12"
-    
-    # Default
-    if any(word in text for word in ["high school", "secondary", "secondary school"]):
-        return "High School"
-    
-    return "High School"
-
-
-def is_scope_filtered(location: str) -> bool:
-    """Check if location should be filtered out (non-NJ opportunities).
-    
-    For now, only include US/NJ opportunities, mark global/virtual as acceptable.
-    Filter out state-specific opportunities outside NJ.
-    """
-    if not location:
-        return False
-    
-    location_lower = location.lower()
-    
-    # Accept these locations
-    accept_patterns = [
-        r"new jersey|nj|united states|us|america|global|virtual|remote|online",
-        r"new york|ny",  # Adjacent state - keep for now
-        r"pennsylvania|pa",  # Adjacent state
-    ]
-    
-    # Reject specific out-of-scope states
-    reject_patterns = [
-        r"\b(california|ca|florida|fl|texas|tx|oregon|or|washington|wa|colorado|co)\b",
-    ]
-    
-    for pattern in accept_patterns:
-        if re.search(pattern, location_lower):
-            return False
-    
-    for pattern in reject_patterns:
-        if re.search(pattern, location_lower):
-            return True
-    
-    # Unknown locations - include them (they might be NJ-based)
-    return False
-
-
 def truncate(text: str, max_length: int = 500) -> str:
     text = clean_text(text)
     if len(text) <= max_length:
@@ -197,91 +64,67 @@ def truncate(text: str, max_length: int = 500) -> str:
     return text[:max_length].rsplit(" ", 1)[0] + "..."
 
 
-def fetch_html(url: str) -> BeautifulSoup:
-    response = requests.get(
-        url,
-        headers={"User-Agent": USER_AGENT},
-        timeout=30,
-    )
-    response.raise_for_status()
-    return BeautifulSoup(response.text, "html.parser")
+def strip_numbered_prefix(title: str) -> str:
+    return clean_text(re.sub(r"^\d+\.\s*", "", title))
 
 
-KNOWN_DEADLINE_PHRASES = (
-    "Contact for Deadline",
-    "Contact for deadline",
-    "Open until filled",
-    "Rolling",
-    "Various",
-)
-
-
-def trim_field_tail(value: str) -> str:
-    if not value:
+def normalize_link(link: str, page_url: str) -> str:
+    """Normalize and validate a link URL."""
+    if not link:
         return ""
-
-    cleaned = clean_text(value)
-    for phrase in KNOWN_DEADLINE_PHRASES:
-        if cleaned.lower().startswith(phrase.lower()):
-            return phrase
-
-    date_match = DATE_PATTERN.match(cleaned)
-    if date_match:
-        return clean_text(date_match.group(0))
-
-    split = DESCRIPTION_START.split(cleaned, maxsplit=1)
-    return clean_text(split[0])
+    
+    absolute_url = urljoin(page_url, link)
+    parsed = urlparse(absolute_url)
+    
+    if parsed.scheme not in {"http", "https"}:
+        return ""
+    
+    return absolute_url.rstrip("/")
 
 
-def _field_marker_pattern(field_names: tuple[str, ...]) -> re.Pattern[str]:
-    labels = "|".join(re.escape(name) for name in field_names)
-    return re.compile(rf"\b({labels}):\s*", re.IGNORECASE)
+def normalize_location(location: str | None) -> str:
+    """Normalize location to extract just the location string, not full description."""
+    if not location:
+        return ""
+    
+    location = clean_text(location).strip()
+    
+    # Extract just the first line or first sentence for location
+    # This prevents long descriptions from being stored in the location field
+    lines = location.split("\n")
+    first_line = clean_text(lines[0]).strip()
+    
+    # If it looks like it contains extra information (very long), truncate
+    if len(first_line) > 100:
+        # Try to extract just the location part (usually at the beginning)
+        sentences = first_line.split(".")
+        first_sentence = clean_text(sentences[0]).strip()
+        if len(first_sentence) > 80:
+            # Last resort: take first 50 characters
+            first_sentence = first_sentence[:50].rsplit(" ", 1)[0]
+        return first_sentence
+    
+    return first_line
 
 
-def _extract_fields_from_text(text: str, field_names: tuple[str, ...]) -> dict[str, str]:
-    marker_pattern = _field_marker_pattern(field_names)
-    markers = list(marker_pattern.finditer(text))
-    if not markers:
-        return {}
-
-    fields: dict[str, str] = {}
-    for index, match in enumerate(markers):
-        key = match.group(1).lower()
-        if key in fields:
-            continue
-
-        start = match.end()
-        end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
-        value = text[start:end].strip()
-        if index + 1 == len(markers):
-            value = trim_field_tail(value)
-        fields[key] = clean_text(value)
-
-    return fields
+def normalize_category(
+    category: str,
+    title: str,
+    description: str,
+    fallback: str = "Activity",
+) -> str:
+    """Normalize category to one of the allowed categories."""
+    if not category:
+        category = infer_category(title, description, fallback)
+    
+    normalized = category.strip().title()
+    if normalized in ALLOWED_CATEGORIES:
+        return normalized
+    
+    return fallback
 
 
-def extract_listing_metadata(text: str) -> dict[str, str]:
-    """Parse structured listing prefixes from StandOut- and College Transitions-style pages."""
-    fields = _extract_fields_from_text(text, STANDOUT_FIELD_ORDER)
-    for key, value in _extract_fields_from_text(text, COLLEGE_TRANSITIONS_FIELD_ORDER).items():
-        fields.setdefault(key, value)
-
-    if fields.get("format") and not fields.get("timeline"):
-        timeline = fields["format"]
-        if fields.get("length"):
-            timeline = f"{timeline} ({fields['length']})"
-        fields["timeline"] = timeline
-
-    if fields.get("eligibility") and not fields.get("ages"):
-        fields["ages"] = fields["eligibility"]
-
-    if fields.get("application deadline") and not fields.get("deadline"):
-        fields["deadline"] = fields["application deadline"]
-
-    return fields
-
-
-def infer_category(title: str, description: str, fallback: str) -> str:
+def infer_category(title: str, description: str, fallback: str = "Activity") -> str:
     haystack = f"{title} {description}".lower()
     checks = [
         ("Scholarship", ["scholarship", "grant", "financial aid"]),
@@ -289,6 +132,7 @@ def infer_category(title: str, description: str, fallback: str) -> str:
         ("Research", ["research", "laboratory", "lab ", "science research"]),
         ("Internship", ["internship", "intern ", "apprenticeship"]),
         ("Summer Program", ["summer", "program"]),
+        ("Volunteering", ["volunteer", "volunteering"]),
     ]
 
     for category, keywords in checks:
@@ -319,253 +163,123 @@ def infer_subject(title: str, description: str, fallback: str = "General") -> st
     return fallback
 
 
-def infer_deadline(description: str) -> str:
-    metadata = extract_listing_metadata(description)
-    if metadata.get("deadline"):
-        return metadata["deadline"]
+def infer_timeline(description: str) -> str:
+    """Infer program timeline from description."""
+    description_lower = description.lower()
+    
+    patterns = [
+        ("Full Year", r"\bfull.?year\b"),
+        ("Academic Year", r"\bacademic.?year\b"),
+        ("Spring", r"\bspring\b"),
+        ("Summer", r"\bsummer\b"),
+        ("Fall", r"\bfall\b"),
+        ("Winter", r"\bwinter\b"),
+        ("4 weeks", r"\b4.?weeks?\b"),
+        ("6 weeks", r"\b6.?weeks?\b"),
+        ("8 weeks", r"\b8.?weeks?\b"),
+        ("10 weeks", r"\b10.?weeks?\b"),
+    ]
+    
+    for timeline, pattern in patterns:
+        if re.search(pattern, description_lower):
+            return timeline
+    
+    return ""
 
+
+def infer_deadline(description: str) -> str:
+    DATE_PATTERN = re.compile(
+        r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+        r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|"
+        r"Dec(?:ember)?)\.?\s+\d{1,2}(?:,\s*\d{4})?\b",
+        re.IGNORECASE,
+    )
     match = DATE_PATTERN.search(description)
     return clean_text(match.group(0)) if match else ""
 
 
-def infer_timeline(description: str) -> str:
-    metadata = extract_listing_metadata(description)
-    return metadata.get("timeline", "")
-
-
 def infer_grade_level(description: str, fallback: str = "High School") -> str:
-    metadata = extract_listing_metadata(description)
-    ages = metadata.get("ages", "")
-    if not ages:
-        return fallback
-
-    ages_lower = ages.lower()
-    if any(token in ages_lower for token in ("high school", "9", "10", "11", "12", "teen")):
-        return "High School"
-    return ages
-
-
-def infer_location_from_metadata(description: str, fallback: str) -> str:
-    metadata = extract_listing_metadata(description)
-    return metadata.get("location") or fallback
-
-
-def _strip_metadata_from_description(text: str) -> str:
-    """Remove all structured field metadata from description text.
+    """Infer grade level from description."""
+    description_lower = description.lower()
     
-    Aggressively removes:
-    - Prefix metadata: "Ages: X Location: Y Timeline: Z Description here..."
-    - Inline fields: "Best for: X", "Cost: Free", etc.
-    - Trailing metadata fragments
-    """
-    if not text:
-        return text
-    
-    cleaned = clean_text(text)
-    result = cleaned
-    
-    # First pass: Remove all metadata field markers and their values
-    # This is aggressive - removes "FieldName: value" patterns wherever they appear
-    metadata_fields = [
-        "Ages", "Location", "Timeline", "Deadline", "Format", "Length",
-        "Cost", "Eligibility", "Application Deadline", "Best for", "What you do"
-    ]
-    
-    # Build pattern that matches any of these fields with their values
-    for field in metadata_fields:
-        # Match "Field: value" where value goes until end of sentence or next field
-        # This captures things like "Deadline: January 10" or "Cost: Free"
-        pattern = rf"\b{re.escape(field)}:\s*[^\n.!?]*(?=\b(?:{'|'.join(metadata_fields)})\b|\.|\!|\?|$)"
-        result = re.sub(pattern, " ", result, flags=re.IGNORECASE)
-    
-    # Second pass: Clean up common metadata remnants that appear after field removal
-    # Remove trailing date/timeline-like fragments from the start
-    # e.g., "spring, fall, or winter Deadline: Various StandOut Connect..."
-    # becomes "StandOut Connect..."
-    
-    # Look for actual content start indicators (subject + verb)
-    content_starters = [
-        r"(?i)\b[A-Z][a-z]+\s+(?:is|are|provides|offers|helps|includes|features|allows|welcomes|seeks|invites|welcomes|looks|seeks)",
-        r"(?i)^(?:this|the|an?)\s+(?:program|opportunity|internship|experience|research|scholarship)",
-        r"(?i)students?\s+(?:will|can|learn|gain|work|participate)",
-    ]
-    
-    for pattern in content_starters:
-        match = re.search(pattern, result)
-        if match and match.start() > 5:  # Some content removed
-            result = result[match.start():]
-            break
-    
-    # Clean up multiple spaces
-    result = re.sub(r"\s+", " ", result).strip()
-    
-    # Safety: if we removed too much, return a truncated original
-    if len(result) < 20 and len(cleaned) > 100:
-        # Try a gentler approach
-        result = cleaned
-        for field in metadata_fields:
-            pattern = rf"^(?:\b{re.escape(field)}:\s*[^\n]*?\s+)*"
-            result = re.sub(pattern, "", result, flags=re.IGNORECASE)
-        result = re.sub(r"\s+", " ", result).strip()
-    
-    return result if result else cleaned
-
-
-def _fix_data_errors(opportunity: Opportunity) -> Opportunity:
-    """Fix common data entry errors."""
-    title = opportunity.title
-    description = opportunity.description
-    organization = opportunity.organization
-    
-    # Fix: Congressman -> Senator for Cory Booker
-    if "congressman" in title.lower() and "cory booker" in title.lower():
-        title = re.sub(r"Congressman", "Senator", title)
-        organization = re.sub(r"Congressman", "Senator", organization)
-    
-    # Fix character encoding issues using raw string patterns
-    # Smart quotes and dashes from web content
     patterns = [
-        (r"[\u201c\u201d]", '"'),   # Curly quotes to straight quotes
-        (r"[\u2018\u2019]", "'"),   # Curly apostrophes to straight
-        (r"[\u2013\u2014]", "-"),   # En/em dashes to hyphen
+        ("College", r"\b(?:college|undergraduate|senior in high school)\b"),
+        ("High School", r"\b(?:high school|9th|10th|11th|12th|grades 9-12)\b"),
+        ("Middle School", r"\b(?:middle school|6th|7th|8th|grades 6-8)\b"),
     ]
     
-    for pattern, replacement in patterns:
-        title = re.sub(pattern, replacement, title)
-        description = re.sub(pattern, replacement, description)
-        organization = re.sub(pattern, replacement, organization)
+    for grade_level, pattern in patterns:
+        if re.search(pattern, description_lower):
+            return grade_level
     
-    # Fix missing spaces after commas in locations
-    title = re.sub(r"(\w),(\w)", r"\1, \2", title)
-    
-    if (title != opportunity.title or 
-        description != opportunity.description or 
-        organization != opportunity.organization):
-        return replace(opportunity, title=title, description=description, organization=organization)
-    
-    return opportunity
+    return fallback
 
 
-def enrich_opportunity_fields(opportunity: Opportunity) -> Opportunity:
-    """Fill missing fields from structured description text and clean up data errors."""
-    # First, fix data errors
-    opportunity = _fix_data_errors(opportunity)
-    
-    description = opportunity.description
-    metadata = extract_listing_metadata(description)
-
-    deadline = opportunity.deadline or metadata.get("deadline") or infer_deadline(description)
-    timeline = opportunity.timeline or metadata.get("timeline") or infer_timeline(description)
-    
-    # Extract and standardize grade level
-    raw_grade = (
-        opportunity.grade_level
-        if opportunity.grade_level and opportunity.grade_level != "High School"
-        else metadata.get("ages")
-        or infer_grade_level(description, opportunity.grade_level or "High School")
-    )
-    grade_level = standardize_grade_level(raw_grade)
-    
-    location = metadata.get("location") or opportunity.location
-    
-    # Clean up description by removing redundant metadata
-    cleaned_description = _strip_metadata_from_description(description)
-
-    return replace(
-        opportunity,
-        deadline=deadline,
-        timeline=timeline,
-        grade_level=grade_level,
-        location=location,
-        description=cleaned_description,
+def enrich_opportunity_fields(opp: Opportunity) -> Opportunity:
+    """Ensure all fields have sensible defaults and are cleaned."""
+    return Opportunity(
+        title=clean_text(opp.title) or "Untitled",
+        organization=clean_text(opp.organization) or opp.title or "Unknown Organization",
+        category=normalize_category(opp.category, opp.title, opp.description),
+        location=normalize_location(opp.location),
+        subject_area=clean_text(opp.subject_area),
+        deadline=clean_text(opp.deadline),
+        timeline=clean_text(opp.timeline),
+        grade_level=clean_text(opp.grade_level) or "High School",
+        description=truncate(opp.description, 500),
+        link=normalize_link(opp.link, "") or opp.link,
+        source=clean_text(opp.source),
+        source_url=opp.source_url,
+        scraped_at=opp.scraped_at,
+        deadline_date=opp.deadline_date,
+        is_active=opp.is_active,
     )
 
 
-def opportunity_richness(opportunity: Opportunity) -> int:
-    """Score opportunity for data completeness. Higher score = better data."""
-    score = 0
+def is_scope_filtered(location: str) -> bool:
+    """Check if a location should be filtered out (e.g., CA, FL, TX specific programs when targeting NJ)."""
+    location_lower = (location or "").lower()
     
-    # Core fields (all have equal weight now)
-    if clean_text(opportunity.deadline) and opportunity.deadline != "Contact for deadline":
-        score += 2  # Boost for real deadlines
-    else:
-        score += 1
+    # Keep anything that's national, remote, or general
+    if any(keyword in location_lower for keyword in ["national", "united states", "usa", "remote", "virtual", "online", "global"]):
+        return False
     
-    if clean_text(opportunity.timeline):
-        score += 1
-        
-    if clean_text(opportunity.description) and len(opportunity.description) > 100:
-        score += 2  # Boost for longer, more detailed descriptions
-    elif clean_text(opportunity.description):
-        score += 1
-        
-    if clean_text(opportunity.subject_area):
-        score += 1
-        
-    if clean_text(opportunity.grade_level):
-        score += 1
-        
-    if clean_text(opportunity.organization) and opportunity.organization != opportunity.title:
-        score += 1  # Different org means better data
+    # Keep anything in the target region (NJ/NY area)
+    if any(keyword in location_lower for keyword in ["new jersey", "nj", "new york", "ny", "pennsylvania", "pa", "connecticut", "ct"]):
+        return False
     
-    return score
+    # Filter out specific out-of-scope states (CA, FL, TX, etc)
+    out_of_scope = ["california", "ca", "florida", "fl", "texas", "tx"]
+    if any(keyword in location_lower for keyword in out_of_scope):
+        return True
+    
+    # Default: keep it
+    return False
 
 
-def _normalize_title(title: str) -> str:
-    """Normalize title for similarity matching."""
-    return re.sub(r"\s+", " ", title.lower()).strip()
-
-
-def dedupe(opportunities: Iterable[Opportunity]) -> list[Opportunity]:
-    """Remove duplicates, preferring entries with richer data."""
-    best: dict[tuple[str, str], Opportunity] = {}
-    by_title: dict[str, list[Opportunity]] = {}
+def dedupe(opportunities: list[Opportunity]) -> list[Opportunity]:
+    """Remove duplicate opportunities based on title and link."""
+    from dedupe import is_duplicate_listing
     
-    # First pass: exact match on title + link
+    seen: set[str] = set()
+    unique: list[Opportunity] = []
+
     for opportunity in opportunities:
         key = (opportunity.title.lower(), opportunity.link.lower())
-        existing = best.get(key)
-        if existing is None or opportunity_richness(opportunity) > opportunity_richness(existing):
-            best[key] = opportunity
         
-        # Track by normalized title for fuzzy matching
-        norm_title = _normalize_title(opportunity.title)
-        if norm_title not in by_title:
-            by_title[norm_title] = []
-        by_title[norm_title].append(opportunity)
-    
-    # Second pass: find near-duplicates with same title but different sources
-    deduplicated = list(best.values())
-    seen_titles: dict[str, Opportunity] = {}
-    
-    final_list = []
-    for opp in deduplicated:
-        norm_title = _normalize_title(opp.title)
+        # Check against previously seen opportunities for duplicates
+        is_dup = False
+        for unique_opp in unique:
+            if is_duplicate_listing(
+                opportunity.title,
+                opportunity.link,
+                unique_opp.title,
+                unique_opp.link,
+            ):
+                is_dup = True
+                break
         
-        if norm_title in seen_titles:
-            existing = seen_titles[norm_title]
-            # Keep the one with richer data
-            if opportunity_richness(opp) > opportunity_richness(existing):
-                # Replace existing with this one
-                final_list = [o for o in final_list if _normalize_title(o.title) != norm_title]
-                final_list.append(opp)
-                seen_titles[norm_title] = opp
-        else:
-            final_list.append(opp)
-            seen_titles[norm_title] = opp
-    
-    return final_list
+        if not is_dup:
+            unique.append(opportunity)
 
-
-def normalize_category(value: str, title: str, description: str, fallback: str) -> str:
-    cleaned = clean_text(value)
-    if cleaned in ALLOWED_CATEGORIES:
-        return cleaned
-    return infer_category(title, description, fallback)
-
-
-def normalize_link(link: str, page_url: str) -> str:
-    cleaned = clean_text(link)
-    if not cleaned:
-        return ""
-    return urljoin(page_url, cleaned)
+    return unique

@@ -3,32 +3,35 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { Bell, BellOff, Loader2 } from "lucide-react";
+import type { User } from "@supabase/supabase-js";
 
-export function PushNotificationManager({ user }: { user: any }) {
+export function PushNotificationManager({ user }: { user: User }) {
   const [isSupported, setIsSupported] = useState(false);
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
-    if ("serviceWorker" in navigator && "PushManager" in window) {
-      setIsSupported(true);
-      checkSubscription();
-    } else {
-      setIsLoading(false);
+    async function loadSubscription() {
+      await Promise.resolve();
+      if ("serviceWorker" in navigator && "PushManager" in window) {
+        setIsSupported(true);
+        try {
+          const registration = await navigator.serviceWorker.register("/sw.js");
+          const subscription = await registration.pushManager.getSubscription();
+          setIsSubscribed(!!subscription);
+        } catch (err) {
+          setErrorMessage(err instanceof Error ? err.message : "Service worker registration failed.");
+        } finally {
+          setIsLoading(false);
+        }
+      } else {
+        setIsLoading(false);
+      }
     }
-  }, []);
 
-  async function checkSubscription() {
-    try {
-      const registration = await navigator.serviceWorker.register("/sw.js");
-      const subscription = await registration.pushManager.getSubscription();
-      setIsSubscribed(!!subscription);
-    } catch (err) {
-      console.error("Service Worker registration failed: ", err);
-    } finally {
-      setIsLoading(false);
-    }
-  }
+    loadSubscription();
+  }, []);
 
   // To actually make this work, the user needs to generate VAPID keys 
   // and put the NEXT_PUBLIC_VAPID_PUBLIC_KEY in .env.local
@@ -51,7 +54,7 @@ export function PushNotificationManager({ user }: { user: any }) {
 
   async function subscribe() {
     if (!publicVapidKey) {
-      alert("Push notifications require a VAPID public key. Please configure it in your environment variables.");
+      setErrorMessage("Push notifications require a VAPID public key.");
       return;
     }
     
@@ -64,17 +67,17 @@ export function PushNotificationManager({ user }: { user: any }) {
       });
 
       if (supabase && user) {
-        // Save subscription to Supabase
-        await supabase.from("push_subscriptions").upsert({
+        const { error } = await supabase.from("push_subscriptions").upsert({
           user_id: user.id,
           subscription: subscription.toJSON()
         });
+        if (error) throw error;
       }
 
       setIsSubscribed(true);
+      setErrorMessage("");
     } catch (err) {
-      console.error("Failed to subscribe", err);
-      alert("Failed to enable notifications. Please ensure you granted permission.");
+      setErrorMessage(err instanceof Error ? err.message : "Failed to enable notifications.");
     } finally {
       setIsLoading(false);
     }
@@ -88,15 +91,16 @@ export function PushNotificationManager({ user }: { user: any }) {
       if (subscription) {
         await subscription.unsubscribe();
         if (supabase && user) {
-          // Remove from Supabase
-          await supabase.from("push_subscriptions")
+          const { error } = await supabase.from("push_subscriptions")
             .delete()
             .eq("user_id", user.id);
+          if (error) throw error;
         }
       }
       setIsSubscribed(false);
+      setErrorMessage("");
     } catch (err) {
-      console.error("Failed to unsubscribe", err);
+      setErrorMessage(err instanceof Error ? err.message : "Failed to disable notifications.");
     } finally {
       setIsLoading(false);
     }
@@ -104,7 +108,7 @@ export function PushNotificationManager({ user }: { user: any }) {
 
   if (!isSupported) {
     return (
-      <div className="flex items-center gap-2 text-sm text-slate-500">
+      <div className="flex items-center gap-2 text-sm text-zinc-500">
         <BellOff size={16} />
         Push notifications are not supported in this browser.
       </div>
@@ -112,21 +116,21 @@ export function PushNotificationManager({ user }: { user: any }) {
   }
 
   return (
-    <div className="flex items-center gap-3 bg-white p-4 rounded-xl border border-slate-200">
-      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${isSubscribed ? "bg-emerald-100 text-emerald-600" : "bg-slate-100 text-slate-500"}`}>
+    <div className="flex items-center gap-3 rounded-md border border-zinc-200 bg-white p-4">
+      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md ${isSubscribed ? "bg-teal-50 text-teal-800" : "bg-zinc-100 text-zinc-500"}`}>
         {isSubscribed ? <Bell size={18} /> : <BellOff size={18} />}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-slate-900">Deadline Alerts</p>
-        <p className="text-xs text-slate-500">Get notified when an opportunity is closing soon.</p>
+        <p className="text-sm font-semibold text-zinc-900">Deadline alerts</p>
+        <p className="text-xs text-zinc-500">{errorMessage || "Get notified when an opportunity is closing soon."}</p>
       </div>
       <button
         onClick={isSubscribed ? unsubscribe : subscribe}
         disabled={isLoading}
-        className={`flex min-w-[100px] items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
+        className={`flex min-w-[100px] items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition ${
           isSubscribed 
-            ? "border border-slate-200 text-slate-600 hover:bg-slate-50"
-            : "bg-emerald-600 text-white hover:bg-emerald-700"
+            ? "border border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+            : "bg-teal-800 text-white"
         } disabled:opacity-50`}
       >
         {isLoading ? <Loader2 size={16} className="animate-spin" /> : (isSubscribed ? "Disable" : "Enable")}

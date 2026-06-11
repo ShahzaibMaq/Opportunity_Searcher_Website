@@ -1,0 +1,164 @@
+# Single source registry for the scraper.
+# To add a site, duplicate the TEMPLATE entry below, uncomment it, and fill in the fields.
+#
+# Fields:
+# - name: Human-readable source name stored with each listing.
+# - url: Page or API endpoint to scrape.
+# - scraper_type: One of "numbered_article", "extracurriculars_api", "generic_css", or "llm_page".
+# - css_selectors: Selectors used by generic_css. Missing selectors are allowed and store null/blank values.
+# - scrape_frequency: Notes for operators and future scheduling; the GitHub Action currently runs daily.
+# - auth_required: true means the source is skipped unless custom authenticated logic is added.
+# - defaults: Fallback values when a source omits a field.
+#
+# TEMPLATE - duplicate and uncomment for a new CSS-based site:
+# - name: Example Programs
+#   url: https://example.edu/high-school-opportunities
+#   scraper_type: generic_css
+#   scrape_frequency: daily
+#   auth_required: false
+#   css_selectors:
+#     item: ".listing-card"          # Container for one listing. If blank, the whole page is used once.
+#     title: ".listing-title"        # Listing title text.
+#     description: ".summary"        # Short description text.
+#     deadline: ".deadline"          # Deadline text; stores null when missing.
+#     link: "a.apply-link"           # Link selector; href is resolved relative to url.
+#     category: ".type"              # Opportunity type/category.
+#     location: ".location"          # City/state/remote location text.
+#     subject_area: ".subject"       # Subject or interest area.
+#     grade_level: ".eligibility"    # Grade/age eligibility.
+#     timeline: ".timeline"          # Program timing, if available.
+#     organization: ".organization"  # Optional organization name.
+#   defaults:
+#     category: Activity
+#     location: United States
+#     subject: General
+
+sources:
+  - name: StandOut Connect
+    url: https://www.standoutconnect.org/post/20-internships-for-high-school-students-in-new-jersey
+    scraper_type: numbered_article
+    scrape_frequency: daily
+    auth_required: false
+    css_selectors:
+      item: h3
+      title: h3
+      description: ""
+      deadline: ""
+      link: a
+      category: ""
+      location: ""
+      subject_area: ""
+    defaults:
+      category: Internship
+      location: New Jersey
+      subject: General
+
+  - name: College Transitions
+    url: https://www.collegetransitions.com/blog/research-opportunities-for-high-school-students/
+    scraper_type: numbered_article
+    scrape_frequency: daily
+    auth_required: false
+    css_selectors:
+      item: h3
+      title: h3
+      description: ""
+      deadline: ""
+      link: a
+      category: ""
+      location: ""
+      subject_area: ""
+    defaults:
+      category: Research
+      location: United States
+      subject: STEM
+
+  - name: Extracurriculars.org
+    url: https://typesense.extracurriculars.org/collections/extracurriculars/documents/search
+    scraper_type: extracurriculars_api
+    scrape_frequency: daily
+    auth_required: false
+    css_selectors:
+      title: title
+      description: description
+      deadline: deadline
+      link: website
+      category: type
+      location: state
+      subject_area: interest
+    defaults:
+      category: Activity
+      location: United States
+      subject: General
+    limit: 120
+
+  - name: College Transitions Summer Internships
+    url: https://www.collegetransitions.com/blog/summer-internships-for-high-school-students/
+    scraper_type: llm_page
+    scrape_frequency: weekly
+    auth_required: false
+    css_selectors:
+      title: ""
+      description: ""
+      deadline: ""
+      link: ""
+      category: ""
+      location: ""
+      subject_area: ""
+    defaults:
+      category: Internship
+      location: United States
+      subject: General
+
+  - name: College Transitions Scholarships
+    url: https://www.collegetransitions.com/blog/scholarships-for-high-school-students/
+    scraper_type: llm_page
+    scrape_frequency: weekly
+    auth_required: false
+    css_selectors:
+      title: ""
+      description: ""
+      deadline: ""
+      link: ""
+      category: ""
+      location: ""
+      subject_area: ""
+    defaults:
+      category: Scholarship
+      location: United States
+      subject: General
+
+  - name: PrepScholar
+    url: https://blog.prepscholar.com/high-school-summer-programs
+    scraper_type: llm_page
+    scrape_frequency: weekly
+    auth_required: false
+    css_selectors:
+      title: ""
+      description: ""
+      deadline: ""
+      link: ""
+      category: ""
+      location: ""
+      subject_area: ""
+    defaults:
+      category: Summer Program
+      location: United States
+      subject: General
+
+  - name: AAAS
+    url: https://www.aaas.org/programs/workforce-development/summer-internships
+    scraper_type: llm_page
+    scrape_frequency: weekly
+    auth_required: false
+    css_selectors:
+      title: ""
+      description: ""
+      deadline: ""
+      link: ""
+      category: ""
+      location: ""
+      subject_area: ""
+    defaults:
+      category: Internship
+      location: United States
+      subject: STEM

@@ -3,9 +3,9 @@ import "./globals.css";
 import { Navigation } from "./components/Navigation";
 
 export const metadata: Metadata = {
-  title: "Opportunity Searcher",
+  title: "AlumniAspirations",
   description:
-    "Search high school internships, summer programs, competitions, scholarships, and research opportunities.",
+    "Discover high school internships, summer programs, competitions, scholarships, and research opportunities tailored to your goals.",
 };
 
 export default function RootLayout({

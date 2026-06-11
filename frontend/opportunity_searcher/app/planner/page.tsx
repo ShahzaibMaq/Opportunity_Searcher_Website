@@ -5,11 +5,14 @@ import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import { Clock3, ExternalLink, CalendarDays, KanbanSquare, ListTodo, Trash2 } from "lucide-react";
 import { PushNotificationManager } from "../components/PushNotificationManager";
+import type { User } from "@supabase/supabase-js";
+import type { Opportunity } from "@/lib/opportunities";
+import { parseDeadline } from "@/lib/opportunities";
 
 type SavedOpportunity = {
   id: string;
   opportunity_link: string;
-  opportunity_data: any;
+  opportunity_data: Opportunity;
   status: string;
   created_at: string;
 };
@@ -17,47 +20,62 @@ type SavedOpportunity = {
 const STATUSES = ["Interested", "Applying", "Submitted", "Interviewing", "Accepted", "Rejected"];
 
 export default function PlannerPage() {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [savedItems, setSavedItems] = useState<SavedOpportunity[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
   const [view, setView] = useState<"board" | "list">("board");
+  const [todayTime] = useState(() => Date.now());
   const router = useRouter();
 
   useEffect(() => {
     let isMounted = true;
 
-    if (!supabase) {
-      setIsLoading(false);
-      return;
-    }
+    async function loadPlanner() {
+      await Promise.resolve();
+      if (!supabase) {
+        if (isMounted) {
+          setErrorMessage("Supabase is not configured.");
+          setIsLoading(false);
+        }
+        return;
+      }
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
+      const { data: { session }, error } = await supabase.auth.getSession();
+
+      if (!isMounted) return;
+      if (error) {
+        setErrorMessage(error.message);
+        setIsLoading(false);
+        return;
+      }
       if (!session) {
         router.push("/login");
       } else {
         if (isMounted) setUser(session.user);
-        fetchSaved(session.user.id);
+        const { data, error: savedError } = await supabase
+          .from("saved_opportunities")
+          .select("*")
+          .eq("user_id", session.user.id)
+          .order("created_at", { ascending: false });
+
+        if (!isMounted) return;
+        if (savedError) {
+          setErrorMessage(savedError.message);
+        } else if (data) {
+          setSavedItems(data);
+          setErrorMessage("");
+        }
+        setIsLoading(false);
       }
-    });
+    }
+
+    loadPlanner();
 
     return () => {
       isMounted = false;
     };
   }, [router]);
-
-  async function fetchSaved(userId: string) {
-    if (!supabase) return;
-    const { data, error } = await supabase
-      .from("saved_opportunities")
-      .select("*")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false });
-
-    if (!error && data) {
-      setSavedItems(data);
-    }
-    setIsLoading(false);
-  }
 
   async function updateStatus(id: string, newStatus: string) {
     if (!supabase) return;
@@ -71,7 +89,9 @@ export default function PlannerPage() {
       
     if (error) {
       setSavedItems(original);
-      alert("Failed to update status");
+      setErrorMessage(error.message);
+    } else {
+      setErrorMessage("");
     }
   }
 
@@ -79,14 +99,21 @@ export default function PlannerPage() {
     if (!supabase) return;
     if (!confirm("Remove this opportunity from your planner?")) return;
     
+    const original = [...savedItems];
     setSavedItems(prev => prev.filter(item => item.id !== id));
-    await supabase.from("saved_opportunities").delete().eq("id", id);
+    const { error } = await supabase.from("saved_opportunities").delete().eq("id", id);
+    if (error) {
+      setSavedItems(original);
+      setErrorMessage(error.message);
+    } else {
+      setErrorMessage("");
+    }
   }
 
   if (isLoading) {
     return (
-      <div className="flex min-h-[calc(100vh-64px)] items-center justify-center bg-[#f6f7f3]">
-        <p className="text-slate-500 font-medium">Loading your planner...</p>
+      <div className="flex min-h-[calc(100vh-64px)] items-center justify-center bg-stone-50">
+        <p className="text-sm text-zinc-600">Loading your planner...</p>
       </div>
     );
   }
@@ -95,50 +122,50 @@ export default function PlannerPage() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "Interested": return "bg-slate-100 text-slate-700 border-slate-200";
-      case "Applying": return "bg-blue-50 text-blue-700 border-blue-200";
-      case "Submitted": return "bg-purple-50 text-purple-700 border-purple-200";
-      case "Interviewing": return "bg-amber-50 text-amber-700 border-amber-200";
-      case "Accepted": return "bg-emerald-50 text-emerald-700 border-emerald-200";
+      case "Interested": return "bg-zinc-50 text-zinc-700 border-zinc-200";
+      case "Applying": return "bg-zinc-50 text-zinc-700 border-zinc-200";
+      case "Submitted": return "bg-zinc-50 text-zinc-700 border-zinc-200";
+      case "Interviewing": return "bg-zinc-50 text-zinc-700 border-zinc-200";
+      case "Accepted": return "bg-teal-50 text-teal-800 border-teal-200";
       case "Rejected": return "bg-red-50 text-red-700 border-red-200";
-      default: return "bg-slate-100 text-slate-700 border-slate-200";
+      default: return "bg-zinc-50 text-zinc-700 border-zinc-200";
     }
   };
 
   const getItemsByStatus = (status: string) => savedItems.filter(item => item.status === status);
 
   const upcomingDeadlines = [...savedItems]
-    .filter(item => item.opportunity_data.deadline)
+    .filter((item) => parseDeadline(item.opportunity_data))
     .sort((a, b) => {
-      const dateA = new Date(a.opportunity_data.deadline).getTime();
-      const dateB = new Date(b.opportunity_data.deadline).getTime();
+      const dateA = parseDeadline(a.opportunity_data)?.getTime() ?? 0;
+      const dateB = parseDeadline(b.opportunity_data)?.getTime() ?? 0;
       return dateA - dateB;
     })
-    .filter(item => {
-       const d = new Date(item.opportunity_data.deadline);
-       return !isNaN(d.getTime()) && d.getTime() > Date.now() - 86400000;
+    .filter((item) => {
+      const deadline = parseDeadline(item.opportunity_data);
+      return deadline && deadline.getTime() > todayTime - 86400000;
     });
 
   return (
-    <main className="min-h-[calc(100vh-64px)] bg-[#f6f7f3] text-slate-950 p-4 sm:p-6 lg:p-8">
+    <main className="min-h-[calc(100vh-64px)] bg-stone-50 p-4 text-zinc-950 sm:p-6 lg:p-8">
       <div className="mx-auto max-w-7xl flex flex-col gap-6">
-        <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between border-b border-slate-200 pb-6">
+        <header className="flex flex-col gap-4 border-b border-zinc-200 pb-6 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-slate-900">My Planner</h1>
-            <p className="mt-1 text-sm text-slate-500">
+            <h1 className="text-2xl font-semibold text-zinc-950">My Planner</h1>
+            <p className="mt-1 text-sm text-zinc-600">
               Track your applications and stay on top of deadlines.
             </p>
           </div>
-          <div className="flex gap-2 bg-white p-1 rounded-lg border border-slate-200">
+          <div className="flex gap-2 rounded-md border border-zinc-200 bg-white p-1">
             <button
               onClick={() => setView("board")}
-              className={`flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md transition ${view === "board" ? "bg-slate-100 text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+              className={`flex items-center gap-2 rounded px-3 py-1.5 text-sm font-medium transition ${view === "board" ? "bg-zinc-900 text-white" : "text-zinc-600"}`}
             >
               <KanbanSquare size={16} /> Board
             </button>
             <button
               onClick={() => setView("list")}
-              className={`flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md transition ${view === "list" ? "bg-slate-100 text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+              className={`flex items-center gap-2 rounded px-3 py-1.5 text-sm font-medium transition ${view === "list" ? "bg-zinc-900 text-white" : "text-zinc-600"}`}
             >
               <ListTodo size={16} /> Deadlines
             </button>
@@ -146,6 +173,9 @@ export default function PlannerPage() {
         </header>
 
         <PushNotificationManager user={user} />
+        {errorMessage ? (
+          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage}</div>
+        ) : null}
 
         {view === "board" ? (
           <div className="flex gap-6 overflow-x-auto pb-4 snap-x">
@@ -165,7 +195,7 @@ export default function PlannerPage() {
                           {item.opportunity_data.title}
                         </h3>
                         <p className="text-xs font-medium text-slate-500 mt-0.5 line-clamp-1">
-                          {item.opportunity_data.organization || item.opportunity_data.source}
+                          {item.opportunity_data.organization || "Organization not listed"}
                         </p>
                       </div>
                       

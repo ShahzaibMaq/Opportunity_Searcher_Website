@@ -4,16 +4,43 @@ import argparse
 import csv
 import json
 import os
-import re
-from dataclasses import asdict, dataclass
+import sys
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Any
 from urllib.parse import urljoin
 
 import requests
+import yaml
 from bs4 import BeautifulSoup, Tag
 from dotenv import load_dotenv
+
+from common import (
+    ALLOWED_CATEGORIES,
+    EXTRACURRICULARS_API_KEY,
+    USER_AGENT,
+    Opportunity,
+    clean_text,
+    dedupe,
+    enrich_opportunity_fields,
+    infer_category,
+    infer_deadline,
+    infer_grade_level,
+    infer_subject,
+    infer_timeline,
+    is_scope_filtered,
+    normalize_category,
+    normalize_link,
+    normalize_location,
+    strip_numbered_prefix,
+    truncate,
+)
+from llm_parser import (
+    extract_opportunities_from_page,
+    enrich_opportunities,
+    is_ollama_available,
+)
 
 try:
     from supabase import create_client
@@ -22,6 +49,7 @@ except ImportError:  # Supabase upload is optional.
 
 
 ROOT_DIR = Path(__file__).resolve().parent
+SOURCES_CONFIG = ROOT_DIR / "sources.config.yaml"
 OUTPUT_DIR = ROOT_DIR / "output"
 DEFAULT_CSV = OUTPUT_DIR / "opportunities.csv"
 DEFAULT_JSON = OUTPUT_DIR / "opportunities.json"
@@ -29,65 +57,7 @@ DEFAULT_FRONTEND_JSON = (
     ROOT_DIR.parent / "frontend" / "opportunity_searcher" / "public" / "data" / "opportunities.json"
 )
 
-USER_AGENT = (
-    "Mozilla/5.0 (compatible; OpportunitySearcherBot/0.1; "
-    "+https://github.com/ShahzaibMaq/Opportunity_Searcher_Website)"
-)
-
-STANDOUT_URL = (
-    "https://www.standoutconnect.org/post/"
-    "20-internships-for-high-school-students-in-new-jersey"
-)
-COLLEGE_TRANSITIONS_URL = (
-    "https://www.collegetransitions.com/blog/"
-    "research-opportunities-for-high-school-students/"
-)
-EXTRACURRICULARS_SEARCH_URL = (
-    "https://typesense.extracurriculars.org/collections/"
-    "extracurriculars/documents/search"
-)
-EXTRACURRICULARS_API_KEY = "L9EJr1spJTxXQ7zEpN22t64YIForeUiX"
-
-DATE_PATTERN = re.compile(
-    r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
-    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|"
-    r"Dec(?:ember)?)\.?\s+\d{1,2}(?:,\s*\d{4})?\b",
-    re.IGNORECASE,
-)
-
-
-@dataclass(frozen=True)
-class Opportunity:
-    title: str
-    organization: str
-    category: str
-    location: str
-    subject_area: str
-    deadline: str
-    grade_level: str
-    description: str
-    link: str
-    source: str
-    source_url: str
-    scraped_at: str
-
-
-def clean_text(value: str | None) -> str:
-    if not value:
-        return ""
-    text = re.sub(r"\s+", " ", value).strip()
-    return text.replace("T he ", "The ")
-
-
-def strip_numbered_prefix(title: str) -> str:
-    return clean_text(re.sub(r"^\d+\.\s*", "", title))
-
-
-def truncate(text: str, max_length: int = 500) -> str:
-    text = clean_text(text)
-    if len(text) <= max_length:
-        return text
-    return text[:max_length].rsplit(" ", 1)[0] + "..."
+SOURCE_TYPES_REQUIRING_LLM = {"llm_page"}
 
 
 def fetch_html(url: str) -> BeautifulSoup:
@@ -126,49 +96,6 @@ def listing_description(heading: Tag) -> str:
             break
 
     return truncate(" ".join(chunks), 500)
-
-
-def infer_category(title: str, description: str, fallback: str) -> str:
-    haystack = f"{title} {description}".lower()
-    checks = [
-        ("Scholarship", ["scholarship", "grant", "financial aid"]),
-        ("Competition", ["competition", "challenge", "contest", "prize"]),
-        ("Research", ["research", "laboratory", "lab ", "science research"]),
-        ("Internship", ["internship", "intern ", "apprenticeship"]),
-        ("Summer Program", ["summer", "program"]),
-    ]
-
-    for category, keywords in checks:
-        if any(keyword in haystack for keyword in keywords):
-            return category
-
-    return fallback
-
-
-def infer_subject(title: str, description: str, fallback: str = "General") -> str:
-    haystack = f"{title} {description}".lower()
-    subjects = [
-        ("Computer Science", ["computer science", "coding", "software", "cyber", "data"]),
-        ("Medicine", ["medical", "medicine", "health", "hospital", "cancer"]),
-        ("Engineering", ["engineering", "engineer"]),
-        ("STEM", ["science", "stem", "biology", "chemistry", "physics", "math"]),
-        ("Journalism", ["journalism", "writing", "newspaper"]),
-        ("Law", ["law", "legal", "court", "justice"]),
-        ("Business", ["business", "finance", "marketing", "entrepreneur"]),
-        ("Environment", ["climate", "environment", "sustainability"]),
-        ("Humanities", ["history", "arts", "museum", "humanities"]),
-    ]
-
-    for subject, keywords in subjects:
-        if any(keyword in haystack for keyword in keywords):
-            return subject
-
-    return fallback
-
-
-def infer_deadline(description: str) -> str:
-    match = DATE_PATTERN.search(description)
-    return clean_text(match.group(0)) if match else ""
 
 
 def parse_numbered_article(
@@ -215,10 +142,101 @@ def parse_numbered_article(
     return opportunities
 
 
-def parse_extracurriculars(scraped_at: str, limit: int | None) -> list[Opportunity]:
+def source_defaults(entry: dict[str, Any]) -> dict[str, str]:
+    """Return source defaults with stable fallbacks."""
+    defaults = entry.get("defaults") or {}
+    return {
+        "category": str(defaults.get("category", "Activity")),
+        "location": str(defaults.get("location", "United States")),
+        "subject": str(defaults.get("subject", "General")),
+    }
+
+
+def source_name(entry: dict[str, Any]) -> str:
+    """Read the configured source name with backward-compatible fallback."""
+    return str(entry.get("name") or entry.get("source") or "Unknown source")
+
+
+def selector_text(parent: Tag | BeautifulSoup, selector: str | None) -> str:
+    """Extract text for an optional CSS selector without crashing on missing fields."""
+    if not selector:
+        return ""
+
+    selected = parent.select_one(selector)
+    return clean_text(selected.get_text(" ", strip=True)) if selected else ""
+
+
+def selector_link(parent: Tag | BeautifulSoup, selector: str | None, page_url: str) -> str:
+    """Extract and resolve an optional link selector."""
+    if not selector:
+        return ""
+
+    selected = parent.select_one(selector)
+    if not selected or not isinstance(selected, Tag):
+        return ""
+
+    href = selected.get("href")
+    return urljoin(page_url, str(href)) if href else ""
+
+
+def parse_generic_css_source(entry: dict[str, Any], scraped_at: str) -> list[Opportunity]:
+    """Scrape a source from declarative CSS selectors."""
+    url = str(entry["url"])
+    defaults = source_defaults(entry)
+    selectors = entry.get("css_selectors") or {}
+    soup = fetch_html(url)
+    item_selector = selectors.get("item")
+    items: list[Tag | BeautifulSoup] = soup.select(item_selector) if item_selector else [soup]
+    opportunities: list[Opportunity] = []
+
+    for item in items:
+        title = selector_text(item, selectors.get("title"))
+        if not title:
+            continue
+
+        description = truncate(selector_text(item, selectors.get("description")), 500)
+        category = selector_text(item, selectors.get("category"))
+        subject = selector_text(item, selectors.get("subject_area"))
+        link = selector_link(item, selectors.get("link"), url) or url
+
+        opportunities.append(
+            enrich_opportunity_fields(
+                Opportunity(
+                    title=title,
+                    organization=selector_text(item, selectors.get("organization")) or title,
+                    category=normalize_category(
+                        category or defaults["category"],
+                        title,
+                        description,
+                        defaults["category"],
+                    ),
+                    location=selector_text(item, selectors.get("location")) or defaults["location"],
+                    subject_area=subject or infer_subject(title, description, defaults["subject"]),
+                    deadline=selector_text(item, selectors.get("deadline")),
+                    timeline=selector_text(item, selectors.get("timeline")) or infer_timeline(description),
+                    grade_level=selector_text(item, selectors.get("grade_level"))
+                    or infer_grade_level(description, "High School"),
+                    description=description,
+                    link=link,
+                    source=source_name(entry),
+                    source_url=url,
+                    scraped_at=scraped_at,
+                )
+            )
+        )
+
+    return opportunities
+
+
+def parse_extracurriculars(
+    scraped_at: str,
+    limit: int | None,
+    entry: dict[str, Any],
+) -> list[Opportunity]:
     opportunities: list[Opportunity] = []
     per_page = 50
     page = 1
+    url = str(entry["url"])
 
     while True:
         remaining = None if limit is None else limit - len(opportunities)
@@ -232,7 +250,7 @@ def parse_extracurriculars(scraped_at: str, limit: int | None) -> list[Opportuni
             "page": page,
         }
         response = requests.get(
-            EXTRACURRICULARS_SEARCH_URL,
+            url,
             params=params,
             headers={
                 "User-Agent": USER_AGENT,
@@ -263,20 +281,23 @@ def parse_extracurriculars(scraped_at: str, limit: int | None) -> list[Opportuni
                 location = ", ".join(states)
 
             opportunities.append(
-                Opportunity(
-                    title=title,
-                    organization=title,
-                    category=pick_extracurriculars_category(types),
-                    location=location,
-                    subject_area=", ".join(interests[:3]) or infer_subject(title, description),
-                    deadline=clean_text(doc.get("deadline")),
-                    grade_level=", ".join(grades) or "High School",
-                    description=description,
-                    link=clean_text(doc.get("website"))
-                    or f"https://extracurriculars.org/extracurricular/{doc.get('id', '')}",
-                    source="Extracurriculars.org",
-                    source_url="https://extracurriculars.org/",
-                    scraped_at=scraped_at,
+                enrich_opportunity_fields(
+                    Opportunity(
+                        title=title,
+                        organization=title,
+                        category=pick_extracurriculars_category(types),
+                        location=location,
+                        subject_area=", ".join(interests[:3]) or infer_subject(title, description),
+                        deadline=clean_text(doc.get("deadline")),
+                        timeline=infer_timeline(description),
+                        grade_level=", ".join(grades) or "High School",
+                        description=description,
+                        link=clean_text(doc.get("website"))
+                        or f"https://extracurriculars.org/extracurricular/{doc.get('id', '')}",
+                        source=source_name(entry),
+                        source_url="https://extracurriculars.org/",
+                        scraped_at=scraped_at,
+                    )
                 )
             )
 
@@ -303,64 +324,240 @@ def pick_extracurriculars_category(types: Iterable[str]) -> str:
     return "Activity"
 
 
-def dedupe(opportunities: Iterable[Opportunity]) -> list[Opportunity]:
-    seen: set[tuple[str, str]] = set()
-    unique: list[Opportunity] = []
+def load_sources_config(path: Path = SOURCES_CONFIG) -> list[dict[str, Any]]:
+    """Load the single editable source registry."""
+    if not path.exists():
+        return []
 
-    for opportunity in opportunities:
-        key = (opportunity.title.lower(), opportunity.link.lower())
-        if key in seen:
+    with path.open(encoding="utf-8") as file:
+        config = yaml.safe_load(file) or {}
+
+    sources = config.get("sources") or []
+    if not isinstance(sources, list):
+        raise RuntimeError(f"Invalid sources in {path}")
+
+    valid: list[dict[str, Any]] = []
+    for entry in sources:
+        if not isinstance(entry, dict):
             continue
-        seen.add(key)
-        unique.append(opportunity)
+        if not entry.get("url") or not source_name(entry):
+            continue
+        valid.append(entry)
+    return valid
 
-    return unique
+
+def llm_item_to_opportunity(
+    item: dict[str, str],
+    *,
+    page_url: str,
+    source: str,
+    scraped_at: str,
+    default_category: str,
+    default_location: str,
+    default_subject: str,
+) -> Opportunity:
+    title = clean_text(item.get("title"))
+    if not title:
+        raise ValueError("LLM item is missing a title")
+
+    description = truncate(item.get("description", ""), 500)
+    category = item.get("category") or infer_category(title, description, default_category)
+
+    return enrich_opportunity_fields(
+        Opportunity(
+            title=title,
+            organization=item.get("organization") or title,
+            category=normalize_category(category, title, description, default_category),
+            location=item.get("location") or default_location,
+            subject_area=item.get("subject_area") or infer_subject(title, description, default_subject),
+            deadline=item.get("deadline") or infer_deadline(description),
+            timeline=item.get("timeline") or infer_timeline(description),
+            grade_level=item.get("grade_level") or infer_grade_level(description, "High School"),
+            description=description,
+            link=item.get("link") or page_url,
+            source=source,
+            source_url=page_url,
+            scraped_at=scraped_at,
+        )
+    )
 
 
-def scrape(limit_extracurriculars: int | None) -> list[Opportunity]:
+def parse_llm_sources(scraped_at: str, sources: list[dict[str, Any]]) -> list[Opportunity]:
+    opportunities: list[Opportunity] = []
+
+    for entry in sources:
+        defaults = source_defaults(entry)
+        url = str(entry["url"])
+        source = source_name(entry)
+        try:
+            extracted = extract_opportunities_from_page(url=url, source=source)
+        except Exception as error:  # noqa: BLE001 - keep scraping other sources
+            print(f"LLM source failed ({source}): {error}", file=sys.stderr)
+            continue
+
+        for item in extracted:
+            opportunities.append(
+                llm_item_to_opportunity(
+                    item,
+                    page_url=url,
+                    source=source,
+                    scraped_at=scraped_at,
+                    default_category=defaults["category"],
+                    default_location=defaults["location"],
+                    default_subject=defaults["subject"],
+                )
+            )
+
+    return opportunities
+
+
+def scrape(
+    limit_extracurriculars: int | None,
+    *,
+    use_llm: bool | None = None,
+    enrich_with_llm: bool | None = None,
+) -> list[Opportunity]:
     scraped_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     records: list[Opportunity] = []
+    sources = load_sources_config()
 
-    records.extend(
-        parse_numbered_article(
-            url=STANDOUT_URL,
-            source="StandOut Connect",
-            default_category="Internship",
-            default_location="New Jersey",
-            default_subject="General",
-            scraped_at=scraped_at,
-        )
-    )
-    records.extend(
-        parse_numbered_article(
-            url=COLLEGE_TRANSITIONS_URL,
-            source="College Transitions",
-            default_category="Research",
-            default_location="United States",
-            default_subject="STEM",
-            scraped_at=scraped_at,
-        )
-    )
-    records.extend(parse_extracurriculars(scraped_at, limit_extracurriculars))
+    llm_sources: list[dict[str, Any]] = []
+    for entry in sources:
+        if entry.get("auth_required"):
+            print(f"Skipping {source_name(entry)}; auth_required is true.", file=sys.stderr)
+            continue
 
-    return dedupe(records)
+        scraper_type = str(entry.get("scraper_type", "generic_css"))
+        defaults = source_defaults(entry)
+        try:
+            if scraper_type == "numbered_article":
+                records.extend(
+                    parse_numbered_article(
+                        url=str(entry["url"]),
+                        source=source_name(entry),
+                        default_category=defaults["category"],
+                        default_location=defaults["location"],
+                        default_subject=defaults["subject"],
+                        scraped_at=scraped_at,
+                    )
+                )
+            elif scraper_type == "extracurriculars_api":
+                configured_limit = entry.get("limit", limit_extracurriculars)
+                limit = limit_extracurriculars if limit_extracurriculars is not None else configured_limit
+                records.extend(parse_extracurriculars(scraped_at, limit, entry))
+            elif scraper_type in SOURCE_TYPES_REQUIRING_LLM:
+                llm_sources.append(entry)
+            elif scraper_type == "generic_css":
+                records.extend(parse_generic_css_source(entry, scraped_at))
+            else:
+                print(
+                    f"Skipping {source_name(entry)}; unknown scraper_type '{scraper_type}'.",
+                    file=sys.stderr,
+                )
+        except Exception as error:  # noqa: BLE001 - keep scraping other configured sources
+            print(f"Source failed ({source_name(entry)}): {error}", file=sys.stderr)
+
+    ollama_up = is_ollama_available()
+    should_use_llm = use_llm if use_llm is not None else ollama_up
+
+    if llm_sources and should_use_llm:
+        if not ollama_up:
+            print(
+                "LLM sources configured but Ollama is not reachable. "
+                "Start Ollama or set OLLAMA_BASE_URL.",
+                file=sys.stderr,
+            )
+        else:
+            records.extend(parse_llm_sources(scraped_at, llm_sources))
+    elif llm_sources and use_llm is False:
+        print("Skipping LLM page sources (--skip-llm).")
+    elif llm_sources and not ollama_up:
+        print(
+            f"Skipping {len(llm_sources)} LLM page source(s); Ollama is not running. "
+            "Use --enable-llm after starting Ollama.",
+        )
+
+    records = dedupe(records)
+    
+    # Filter out-of-scope locations (e.g., CA, FL, TX programs when targeting NJ)
+    filtered_count = 0
+    filtered_records = []
+    for record in records:
+        if is_scope_filtered(record.location):
+            filtered_count += 1
+        else:
+            filtered_records.append(record)
+    
+    if filtered_count > 0:
+        print(f"Filtered out {filtered_count} out-of-scope location opportunity(ies)", file=sys.stderr)
+        records = filtered_records
+
+    should_enrich = enrich_with_llm if enrich_with_llm is not None else ollama_up
+    if should_enrich and ollama_up:
+        try:
+            records = enrich_opportunities(records)
+        except Exception as error:  # noqa: BLE001
+            print(f"LLM enrichment failed: {error}", file=sys.stderr)
+    elif enrich_with_llm and not ollama_up:
+        print("LLM enrichment skipped; Ollama is not running.", file=sys.stderr)
+
+    return [enrich_opportunity_fields(record) for record in records]
 
 
 def write_csv(records: list[Opportunity], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = [asdict(record) for record in records]
-    fieldnames = list(asdict(records[0]).keys()) if records else list(Opportunity.__dataclass_fields__)
-
+    
+    # Minimalist CSV: kept subject_area and timeline for functionality,
+    # removed source, source_url, scraped_at
+    fieldnames = [
+        "title",
+        "organization",
+        "category",
+        "location",
+        "grade_level",
+        "deadline",
+        "deadline_date",
+        "is_active",
+        "description",
+        "link",
+        "subject_area",
+        "timeline",
+    ]
+    
     with path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
 
-def write_json(records: list[Opportunity], path: Path) -> None:
+def write_json(records: list[Opportunity], path: Path, *, active_only: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Create minimalist JSON with essential fields
+    # Removed: source, source_url, scraped_at (not needed in frontend)
+    # Kept: subject_area (for filtering), timeline (for display)
+    minimal_records = []
+    for record in records:
+        if active_only and not record.is_active:
+            continue
+        minimal_records.append({
+            "title": record.title,
+            "organization": record.organization,
+            "category": record.category,
+            "location": record.location,
+            "grade_level": record.grade_level,
+            "deadline": record.deadline,
+            "deadline_date": record.deadline_date,
+            "is_active": record.is_active,
+            "description": record.description,
+            "link": record.link,
+            "subject_area": record.subject_area or "",
+            "timeline": record.timeline or "",
+        })
+    
     with path.open("w", encoding="utf-8") as file:
-        json.dump([asdict(record) for record in records], file, indent=2, ensure_ascii=False)
+        json.dump(minimal_records, file, indent=2, ensure_ascii=False)
 
 
 def upload_to_supabase(records: list[Opportunity]) -> None:
@@ -376,7 +573,11 @@ def upload_to_supabase(records: list[Opportunity]) -> None:
 
     client = create_client(url, key)
     payload = [asdict(record) for record in records]
-    client.table(table).upsert(payload, on_conflict="link").execute()
+    client.rpc("archive_expired_opportunities").execute()
+    response = client.table(table).upsert(payload, on_conflict="link").execute()
+    if getattr(response, "error", None):
+        raise RuntimeError(f"Supabase upload failed: {response.error}")
+    client.rpc("archive_expired_opportunities").execute()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -400,6 +601,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Upload scraped records to Supabase using scraper/.env credentials.",
     )
+    llm_group = parser.add_mutually_exclusive_group()
+    llm_group.add_argument(
+        "--enable-llm",
+        action="store_true",
+        help="Scrape llm_page sources listed in scraper/sources.config.yaml with a local Ollama model.",
+    )
+    llm_group.add_argument(
+        "--skip-llm",
+        action="store_true",
+        help="Skip LLM page scraping and enrichment even when Ollama is available.",
+    )
     return parser
 
 
@@ -408,15 +620,26 @@ def main() -> None:
     args = build_parser().parse_args()
     extra_limit = None if args.limit_extracurriculars < 0 else args.limit_extracurriculars
 
-    records = scrape(limit_extracurriculars=extra_limit)
+    use_llm = True if args.enable_llm else False if args.skip_llm else None
+    records = scrape(
+        limit_extracurriculars=extra_limit,
+        use_llm=use_llm,
+        enrich_with_llm=use_llm,
+    )
     write_csv(records, args.csv)
     write_json(records, args.json)
-    write_json(records, args.frontend_json)
+    write_json(records, args.frontend_json, active_only=True)
 
     if args.upload_supabase:
         upload_to_supabase(records)
 
+    with_deadline = sum(1 for record in records if record.deadline)
+    with_timeline = sum(1 for record in records if record.timeline)
+    archived = sum(1 for record in records if not record.is_active)
     print(f"Scraped {len(records)} opportunities")
+    print(f"With deadline: {with_deadline}/{len(records)}")
+    print(f"With timeline: {with_timeline}/{len(records)}")
+    print(f"Archived inactive: {archived}/{len(records)}")
     print(f"CSV: {args.csv}")
     print(f"JSON: {args.json}")
     print(f"Frontend JSON: {args.frontend_json}")

@@ -57,6 +57,8 @@ export default function AccountPage() {
 
       const session = sessionData.session;
       if (!session) {
+        await Promise.resolve();
+        if (!isMounted) return;
         router.push("/login");
         return;
       }

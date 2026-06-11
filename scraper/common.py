@@ -188,31 +188,102 @@ def infer_timeline(description: str) -> str:
     return ""
 
 
+DATE_PATTERN = re.compile(
+    r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|"
+    r"Dec(?:ember)?)\.?\s+\d{1,2}(?:,\s*\d{4})?\b",
+    re.IGNORECASE,
+)
+
+
 def infer_deadline(description: str) -> str:
-    DATE_PATTERN = re.compile(
-        r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
-        r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|"
-        r"Dec(?:ember)?)\.?\s+\d{1,2}(?:,\s*\d{4})?\b",
+    text = clean_text(description)
+    if not text:
+        return ""
+
+    labeled_deadline = re.search(
+        r"\b(?:application\s+)?deadline(?:\s+is)?\s*:\s*([^.;|\n]+)",
+        text,
         re.IGNORECASE,
     )
-    match = DATE_PATTERN.search(description)
+    if labeled_deadline:
+        return clean_text(labeled_deadline.group(1))
+
+    phrase_deadline = re.search(
+        r"\b(?:applications?\s+(?:are\s+)?(?:due|close)|apply\s+by|submit(?:ted)?\s+by)\s+([^.;|\n]+)",
+        text,
+        re.IGNORECASE,
+    )
+    if phrase_deadline:
+        return clean_text(phrase_deadline.group(1))
+
+    special_deadline = re.search(
+        r"\b(rolling|various|tba|tbd|to be announced|contact for deadline|not yet announced)\b",
+        text,
+        re.IGNORECASE,
+    )
+    if special_deadline:
+        return clean_text(special_deadline.group(1)).title()
+
+    match = DATE_PATTERN.search(text)
     return clean_text(match.group(0)) if match else ""
+
+
+def normalize_grade_level(value: str | None, description: str = "") -> str:
+    text = clean_text(value)
+    context = clean_text(f"{text} {description}")
+    normalized = context.lower()
+    grades: set[int] = set()
+
+    grade_words = {
+        9: ["freshman", "freshmen", "9th", "grade 9", "rising 9"],
+        10: ["sophomore", "sophomores", "10th", "grade 10", "rising 10"],
+        11: ["junior", "juniors", "11th", "grade 11", "rising 11"],
+        12: ["senior", "seniors", "12th", "grade 12", "rising 12", "graduating senior"],
+    }
+    for grade, words in grade_words.items():
+        if any(re.search(rf"\b{re.escape(word)}\b", normalized) for word in words):
+            grades.add(grade)
+
+    for match in re.finditer(r"\bgrades?\s*(\d{1,2})\s*(?:-|to|through)\s*(\d{1,2})\b", normalized):
+        start, end = int(match.group(1)), int(match.group(2))
+        grades.update(range(max(1, start), min(12, end) + 1))
+
+    for match in re.finditer(r"\bgrades?\s*((?:\d{1,2}\s*,?\s*(?:and\s*)?)+)\b", normalized):
+        for number in re.findall(r"\d{1,2}", match.group(1)):
+            grade = int(number)
+            if 1 <= grade <= 12:
+                grades.add(grade)
+
+    if grades:
+        high_school_grades = [grade for grade in sorted(grades) if 9 <= grade <= 12]
+        if high_school_grades:
+            return ", ".join(str(grade) for grade in high_school_grades)
+
+    if re.search(r"\bhigh school\b", normalized):
+        return "High School"
+    if text:
+        return text
+    return "High School"
 
 
 def infer_grade_level(description: str, fallback: str = "High School") -> str:
     """Infer grade level from description."""
+    inferred = normalize_grade_level("", description)
+    if inferred != "High School":
+        return inferred
+
     description_lower = description.lower()
-    
     patterns = [
-        ("College", r"\b(?:college|undergraduate|senior in high school)\b"),
         ("High School", r"\b(?:high school|9th|10th|11th|12th|grades 9-12)\b"),
         ("Middle School", r"\b(?:middle school|6th|7th|8th|grades 6-8)\b"),
+        ("College", r"\b(?:college|undergraduate)\b"),
     ]
-    
+
     for grade_level, pattern in patterns:
         if re.search(pattern, description_lower):
             return grade_level
-    
+
     return fallback
 
 
@@ -226,7 +297,7 @@ def enrich_opportunity_fields(opp: Opportunity) -> Opportunity:
         subject_area=clean_text(opp.subject_area),
         deadline=clean_text(opp.deadline) or infer_deadline(opp.description),
         timeline=clean_text(opp.timeline) or infer_timeline(opp.description),
-        grade_level=clean_text(opp.grade_level) or "High School",
+        grade_level=normalize_grade_level(opp.grade_level, opp.description),
         description=truncate(opp.description, 500),
         link=normalize_link(opp.link, "") or opp.link,
         source=clean_text(opp.source),

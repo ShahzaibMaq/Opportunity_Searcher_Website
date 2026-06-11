@@ -72,13 +72,36 @@ export function splitValues(value: string | null | undefined) {
 
 type DeadlineFields = Pick<Opportunity, "deadline" | "deadline_date" | "description" | "title">;
 
+const deadlineDatePattern =
+  /\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}(?:,\s*\d{4})?\b/i;
+
+export function inferredDeadlineText(opportunity: DeadlineFields) {
+  const existing = opportunity.deadline?.trim();
+  if (existing) return existing;
+
+  const description = opportunity.description ?? "";
+  const labeled = description.match(/\b(?:application\s+)?deadline(?:\s+is)?\s*:\s*([^.;|\n]+)/i);
+  if (labeled?.[1]) return labeled[1].trim();
+
+  const phrase = description.match(
+    /\b(?:applications?\s+(?:are\s+)?(?:due|close)|apply\s+by|submit(?:ted)?\s+by)\s+([^.;|\n]+)/i,
+  );
+  if (phrase?.[1]) return phrase[1].trim();
+
+  const special = description.match(/\b(rolling|various|tba|tbd|to be announced|contact for deadline|not yet announced)\b/i);
+  if (special?.[1]) return titleCase(special[1]);
+
+  return description.match(deadlineDatePattern)?.[0] ?? "";
+}
+
 export function parseDeadline(opportunity: DeadlineFields) {
   if (opportunity.deadline_date) {
     const parsedIso = new Date(`${opportunity.deadline_date}T00:00:00`);
     return Number.isNaN(parsedIso.getTime()) ? null : parsedIso;
   }
 
-  if (!opportunity.deadline || /not listed|rolling|tba|tbd|none/i.test(opportunity.deadline)) {
+  const deadline = inferredDeadlineText(opportunity);
+  if (!deadline || /not listed|rolling|various|tba|tbd|none|contact for deadline|to be announced/i.test(deadline)) {
     return null;
   }
 
@@ -86,7 +109,7 @@ export function parseDeadline(opportunity: DeadlineFields) {
   today.setHours(0, 0, 0, 0);
   const currentYear = today.getFullYear();
 
-  let value = opportunity.deadline;
+  let value = deadline;
   if (!/\d{4}/.test(value)) {
     const context = `${opportunity.title ?? ""} ${opportunity.description ?? ""}`;
     const needle = value.toLowerCase().split(",")[0]?.trim() ?? "";
@@ -102,7 +125,7 @@ export function parseDeadline(opportunity: DeadlineFields) {
   }
 
   parsed.setHours(0, 0, 0, 0);
-  if (!/\d{4}/.test(opportunity.deadline) && parsed < today) {
+  if (!/\d{4}/.test(deadline) && parsed < today) {
     const nextYear = new Date(parsed);
     nextYear.setFullYear(currentYear + 1);
     return nextYear;
@@ -171,17 +194,18 @@ export function isClosingSoon(opportunity: Opportunity) {
 }
 
 export function deadlineLabel(opportunity: Opportunity) {
-  if (!opportunity.deadline) {
+  const deadline = inferredDeadlineText(opportunity);
+  if (!deadline) {
     return "Deadline not listed";
   }
 
   const parsed = parseDeadline(opportunity);
-  return parsed ? dateFormatter.format(parsed) : opportunity.deadline;
+  return parsed ? dateFormatter.format(parsed) : deadline;
 }
 
 export function countdownLabel(opportunity: Opportunity) {
   const days = daysUntil(opportunity);
-  if (days === null) return opportunity.deadline || "Deadline not listed";
+  if (days === null) return inferredDeadlineText(opportunity) || "Deadline not listed";
   if (days < 0) return "Deadline passed";
   if (days === 0) return "Due today";
   return `${days} days left`;
@@ -224,14 +248,54 @@ function gradeMatches(profileGrade: number | string | null | undefined, gradeLev
   const normalized = normalizeSearchText(gradeLevel);
   if (normalized.includes("high school")) return grade >= 9 && grade <= 12;
 
-  const range = normalized.match(/grade\s*(\d{1,2})(?:\s*-\s*(\d{1,2}))?/);
-  if (range) {
-    const start = Number(range[1]);
-    const end = Number(range[2] ?? range[1]);
-    return grade >= start && grade <= end;
+  return gradeNumbersFromText(gradeLevel).includes(grade);
+}
+
+function gradeNumbersFromText(value: string | null | undefined) {
+  const normalized = normalizeSearchText(value);
+  const grades = new Set<number>();
+  const wordGrades: Array<[number, RegExp]> = [
+    [9, /\b(freshman|freshmen|9th|grade 9|rising 9)\b/],
+    [10, /\b(sophomore|sophomores|10th|grade 10|rising 10)\b/],
+    [11, /\b(junior|juniors|11th|grade 11|rising 11)\b/],
+    [12, /\b(senior|seniors|12th|grade 12|rising 12|graduating senior)\b/],
+  ];
+
+  for (const [grade, pattern] of wordGrades) {
+    if (pattern.test(normalized)) grades.add(grade);
   }
 
-  return normalized.includes(String(grade));
+  for (const match of normalized.matchAll(/\bgrades?\s*(\d{1,2})\s*(?:-|to|through)\s*(\d{1,2})\b/g)) {
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+    for (let grade = Math.max(1, start); grade <= Math.min(12, end); grade += 1) {
+      grades.add(grade);
+    }
+  }
+
+  for (const match of normalized.matchAll(/\bgrades?\s*((?:\d{1,2}\s*,?\s*(?:and\s*)?)+)\b/g)) {
+    for (const number of match[1].matchAll(/\d{1,2}/g)) {
+      const grade = Number(number[0]);
+      if (grade >= 1 && grade <= 12) grades.add(grade);
+    }
+  }
+
+  if (/^\s*\d{1,2}(?:\s*,\s*\d{1,2})*\s*$/.test(value ?? "")) {
+    for (const number of (value ?? "").matchAll(/\d{1,2}/g)) {
+      const grade = Number(number[0]);
+      if (grade >= 1 && grade <= 12) grades.add(grade);
+    }
+  }
+
+  return Array.from(grades).filter((grade) => grade >= 9 && grade <= 12).sort((first, second) => first - second);
+}
+
+export function gradeLevelLabel(value: string | null | undefined) {
+  const grades = gradeNumbersFromText(value);
+  if (grades.length > 0) {
+    return `Grades: ${grades.join(", ")}`;
+  }
+  return `Grades: ${(value ?? "").trim() || "High School"}`;
 }
 
 export function profileIsComplete(profile: UserProfile) {

@@ -3,7 +3,7 @@ import "./globals.css";
 import { Navigation } from "./components/Navigation";
 
 export const metadata: Metadata = {
-  title: "AlumniAspirations",
+  title: "Alumni - Aspirations",
   description:
     "Discover high school internships, summer programs, competitions, scholarships, and research opportunities tailored to your goals.",
 };

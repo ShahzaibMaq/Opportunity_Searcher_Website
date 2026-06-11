@@ -41,13 +41,12 @@ export default function LoginPage() {
     }
 
     router.push("/onboarding");
-    router.refresh();
   }
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-stone-50 p-4">
       <div className="w-full max-w-md rounded-md border border-zinc-200 bg-white p-6">
-        <h1 className="text-2xl font-semibold text-zinc-950">AlumniAspirations</h1>
+        <h1 className="text-2xl font-semibold text-zinc-950">Alumni - Aspirations</h1>
         <p className="mt-2 text-sm text-zinc-600">Save listings, track applications, and get personalized sorting.</p>
 
         <div className="mt-6 grid grid-cols-2 rounded-md border border-zinc-200 p-1">

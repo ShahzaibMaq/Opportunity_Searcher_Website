@@ -5,9 +5,12 @@ import { supabase } from "@/lib/supabase";
 import { Bell, BellOff, Loader2 } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
 
+const LOCAL_ALERTS_KEY = "deadline-alerts-browser-enabled";
+
 export function PushNotificationManager({ user }: { user: User }) {
   const [isSupported, setIsSupported] = useState(false);
   const [isSubscribed, setIsSubscribed] = useState(false);
+  const [hasBrowserAlerts, setHasBrowserAlerts] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -20,6 +23,10 @@ export function PushNotificationManager({ user }: { user: User }) {
           const registration = await navigator.serviceWorker.register("/sw.js");
           const subscription = await registration.pushManager.getSubscription();
           setIsSubscribed(!!subscription);
+          setHasBrowserAlerts(
+            Notification.permission === "granted" &&
+              window.localStorage.getItem(LOCAL_ALERTS_KEY) === "true",
+          );
         } catch (err) {
           setErrorMessage(err instanceof Error ? err.message : "Service worker registration failed.");
         } finally {
@@ -52,14 +59,40 @@ export function PushNotificationManager({ user }: { user: User }) {
     return outputArray;
   }
 
-  async function subscribe() {
-    if (!publicVapidKey) {
-      setErrorMessage("Push notifications require a VAPID public key.");
-      return;
+  async function enableBrowserAlerts(message = "Browser deadline alerts are enabled while this site is open.") {
+    if (!("Notification" in window)) {
+      throw new Error("Browser notifications are not supported in this browser.");
     }
-    
+
+    const permission =
+      Notification.permission === "default"
+        ? await Notification.requestPermission()
+        : Notification.permission;
+
+    if (permission !== "granted") {
+      throw new Error("Notification permission was not granted.");
+    }
+
+    window.localStorage.setItem(LOCAL_ALERTS_KEY, "true");
+    setHasBrowserAlerts(true);
+
+    const registration = await navigator.serviceWorker.ready;
+    await registration.showNotification("Deadline alerts enabled", {
+      body: message,
+      icon: "/favicon.ico",
+      badge: "/favicon.ico",
+    });
+  }
+
+  async function subscribe() {
     setIsLoading(true);
     try {
+      if (!publicVapidKey) {
+        await enableBrowserAlerts("Full push alerts need a VAPID key, so browser alerts are enabled for this device.");
+        setErrorMessage("Browser alerts enabled. Full push alerts still need a VAPID public key.");
+        return;
+      }
+
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
@@ -75,9 +108,22 @@ export function PushNotificationManager({ user }: { user: User }) {
       }
 
       setIsSubscribed(true);
+      setHasBrowserAlerts(false);
+      window.localStorage.removeItem(LOCAL_ALERTS_KEY);
       setErrorMessage("");
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : "Failed to enable notifications.");
+      try {
+        await enableBrowserAlerts("Push service was unavailable, so browser alerts are enabled for this device.");
+        setErrorMessage("Push service unavailable. Browser alerts are enabled while this site is open.");
+      } catch (fallbackError) {
+        setErrorMessage(
+          fallbackError instanceof Error
+            ? fallbackError.message
+            : err instanceof Error
+              ? err.message
+              : "Failed to enable notifications.",
+        );
+      }
     } finally {
       setIsLoading(false);
     }
@@ -97,7 +143,9 @@ export function PushNotificationManager({ user }: { user: User }) {
           if (error) throw error;
         }
       }
+      window.localStorage.removeItem(LOCAL_ALERTS_KEY);
       setIsSubscribed(false);
+      setHasBrowserAlerts(false);
       setErrorMessage("");
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : "Failed to disable notifications.");
@@ -115,25 +163,27 @@ export function PushNotificationManager({ user }: { user: User }) {
     );
   }
 
+  const alertsEnabled = isSubscribed || hasBrowserAlerts;
+
   return (
     <div className="flex items-center gap-3 rounded-md border border-zinc-200 bg-white p-4">
-      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md ${isSubscribed ? "bg-teal-50 text-teal-800" : "bg-zinc-100 text-zinc-500"}`}>
-        {isSubscribed ? <Bell size={18} /> : <BellOff size={18} />}
+      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md ${alertsEnabled ? "bg-teal-50 text-teal-800" : "bg-zinc-100 text-zinc-500"}`}>
+        {alertsEnabled ? <Bell size={18} /> : <BellOff size={18} />}
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm font-semibold text-zinc-900">Deadline alerts</p>
         <p className="text-xs text-zinc-500">{errorMessage || "Get notified when an opportunity is closing soon."}</p>
       </div>
       <button
-        onClick={isSubscribed ? unsubscribe : subscribe}
+        onClick={alertsEnabled ? unsubscribe : subscribe}
         disabled={isLoading}
         className={`flex min-w-[100px] items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition ${
-          isSubscribed 
+          alertsEnabled 
             ? "border border-zinc-200 text-zinc-600 hover:bg-zinc-50"
             : "bg-teal-800 text-white"
         } disabled:opacity-50`}
       >
-        {isLoading ? <Loader2 size={16} className="animate-spin" /> : (isSubscribed ? "Disable" : "Enable")}
+        {isLoading ? <Loader2 size={16} className="animate-spin" /> : (alertsEnabled ? "Disable" : "Enable")}
       </button>
     </div>
   );

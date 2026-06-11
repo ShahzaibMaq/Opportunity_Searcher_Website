@@ -24,6 +24,7 @@ import {
   compareByDeadline,
   countdownLabel,
   deadlineLabel,
+  gradeLevelLabel,
   isClosingSoon,
   isListingActive,
   matchSummary,
@@ -330,7 +331,7 @@ export default function Home() {
         <header className="flex flex-col gap-4 border-b border-zinc-200 pb-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <div className="flex items-center gap-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-teal-800">AlumniAspirations</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-teal-800">Alumni - Aspirations</p>
               {user ? (
                 <Link href="/planner" className="text-xs font-medium text-teal-700 hover:underline flex items-center gap-1">
                   <CalendarDays size={13} />
@@ -500,7 +501,7 @@ export default function Home() {
                     </div>
                     <div className="flex items-center gap-2 sm:col-span-2">
                       <MapPin size={16} className="text-zinc-400" />
-                      <span>Grades {opportunity.grade_level || "High School"}</span>
+                      <span>{gradeLevelLabel(opportunity.grade_level)}</span>
                     </div>
                   </div>
                 </article>

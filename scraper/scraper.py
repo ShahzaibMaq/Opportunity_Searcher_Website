@@ -32,6 +32,7 @@ from common import (
     infer_timeline,
     is_scope_filtered,
     normalize_category,
+    normalize_grade_level,
     normalize_link,
     normalize_location,
     strip_numbered_prefix,
@@ -57,6 +58,7 @@ DEFAULT_JSON = OUTPUT_DIR / "opportunities.json"
 DEFAULT_FRONTEND_JSON = (
     ROOT_DIR.parent / "frontend" / "opportunity_searcher" / "public" / "data" / "opportunities.json"
 )
+DEEP_DEADLINE_LIMIT = int(os.getenv("DEEP_DEADLINE_LIMIT", "50"))
 
 SOURCE_TYPES_REQUIRING_LLM = {"llm_page"}
 
@@ -69,6 +71,64 @@ def fetch_html(url: str) -> BeautifulSoup:
     )
     response.raise_for_status()
     return BeautifulSoup(response.text, "html.parser")
+
+
+def fetch_detail_text(url: str) -> str:
+    response = requests.get(
+        url,
+        headers={"User-Agent": USER_AGENT},
+        timeout=20,
+    )
+    response.raise_for_status()
+    soup = BeautifulSoup(response.text, "html.parser")
+    for tag in soup(["script", "style", "nav", "footer", "header", "noscript"]):
+        tag.decompose()
+    return clean_text(soup.get_text(" ", strip=True))
+
+
+def enrich_missing_details_from_links(records: list[Opportunity]) -> list[Opportunity]:
+    enriched: list[Opportunity] = []
+    checked = 0
+
+    for record in records:
+        needs_deadline = not record.deadline
+        needs_grade = not record.grade_level or record.grade_level == "High School"
+        if checked >= DEEP_DEADLINE_LIMIT or not record.link or not (needs_deadline or needs_grade):
+            enriched.append(record)
+            continue
+
+        checked += 1
+        try:
+            detail_text = truncate(fetch_detail_text(record.link), 3000)
+        except Exception as error:  # noqa: BLE001 - keep the scrape resilient
+            print(f"Detail page failed ({record.title}): {error}", file=sys.stderr)
+            enriched.append(record)
+            continue
+
+        combined_text = clean_text(f"{record.description} {detail_text}")
+        enriched.append(
+            Opportunity(
+                title=record.title,
+                organization=record.organization,
+                category=record.category,
+                location=record.location,
+                subject_area=record.subject_area,
+                deadline=record.deadline or infer_deadline(combined_text),
+                timeline=record.timeline or infer_timeline(combined_text),
+                grade_level=normalize_grade_level(record.grade_level, combined_text),
+                description=record.description,
+                link=record.link,
+                source=record.source,
+                source_url=record.source_url,
+                scraped_at=record.scraped_at,
+                deadline_date=record.deadline_date,
+                is_active=record.is_active,
+            )
+        )
+
+    if checked:
+        print(f"Checked {checked} detail page(s) for missing deadlines/grades", file=sys.stderr)
+    return enriched
 
 
 def listing_description(heading: Tag) -> str:
@@ -479,6 +539,7 @@ def scrape(
         )
 
     records = dedupe(records)
+    records = enrich_missing_details_from_links(records)
     
     # Filter out-of-scope locations (e.g., CA, FL, TX programs when targeting NJ)
     filtered_count = 0

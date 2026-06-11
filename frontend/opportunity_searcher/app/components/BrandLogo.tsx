@@ -1,21 +1,27 @@
+import Image from "next/image";
+
 type BrandLogoProps = {
   size?: "sm" | "md";
   showName?: boolean;
 };
 
 export function BrandLogo({ size = "md", showName = true }: BrandLogoProps) {
-  const boxSize = size === "sm" ? "h-7 w-7 text-xs" : "h-8 w-8 text-sm";
+  const imgSize = size === "sm" ? 28 : 32;
 
   return (
     <div className="flex items-center gap-2">
-      <div
-        className={`flex ${boxSize} items-center justify-center rounded-md bg-gradient-to-br from-teal-800 to-teal-600 font-semibold text-white shadow-sm`}
-        aria-hidden="true"
-      >
-        AA
-      </div>
+      <Image
+        src="/logo.png"
+        alt="Alumni - Aspirations logo"
+        width={imgSize}
+        height={imgSize}
+        className="rounded-md"
+        priority
+      />
       {showName ? (
-        <span className="hidden text-sm font-semibold text-zinc-900 sm:inline">AlumniAspirations</span>
+        <span className="hidden text-sm font-semibold text-zinc-900 sm:inline">
+          Alumni - Aspirations
+        </span>
       ) : null}
     </div>
   );

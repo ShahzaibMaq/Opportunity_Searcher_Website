@@ -53,6 +53,8 @@ export default function OnboardingPage() {
 
       const session = sessionData.session;
       if (!session) {
+        await Promise.resolve();
+        if (!isMounted) return;
         router.push("/login");
         return;
       }
@@ -72,6 +74,8 @@ export default function OnboardingPage() {
       };
 
       if (profileIsComplete(mergedProfile)) {
+        await Promise.resolve();
+        if (!isMounted) return;
         router.push("/");
         return;
       }
@@ -136,7 +140,6 @@ export default function OnboardingPage() {
     }
 
     router.push("/");
-    router.refresh();
   }
 
   if (isLoading) {

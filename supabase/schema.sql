@@ -51,6 +51,18 @@ create table if not exists public.push_subscriptions (
   updated_at timestamptz not null default now()
 );
 
+alter table public.profiles
+add column if not exists updated_at timestamptz not null default now();
+
+alter table public.opportunities
+add column if not exists updated_at timestamptz not null default now();
+
+alter table public.saved_opportunities
+add column if not exists updated_at timestamptz not null default now();
+
+alter table public.push_subscriptions
+add column if not exists updated_at timestamptz not null default now();
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql

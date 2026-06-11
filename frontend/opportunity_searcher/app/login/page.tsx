@@ -9,6 +9,7 @@ export default function LoginPage() {
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [gender, setGender] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState({ text: "", type: "" });
   const router = useRouter();
@@ -25,7 +26,7 @@ export default function LoginPage() {
 
     const response =
       mode === "signup"
-        ? await supabase.auth.signUp({ email, password })
+        ? await supabase.auth.signUp({ email, password, options: { data: { gender } } })
         : await supabase.auth.signInWithPassword({ email, password });
 
     setIsLoading(false);
@@ -91,6 +92,24 @@ export default function LoginPage() {
               required
             />
           </label>
+
+          {mode === "signup" ? (
+            <label className="grid gap-1 text-sm font-medium text-zinc-700">
+              Gender
+              <select
+                value={gender}
+                onChange={(event) => setGender(event.target.value)}
+                className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-teal-700"
+                required
+              >
+                <option value="" disabled>Select gender</option>
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+                <option value="Non-binary">Non-binary</option>
+                <option value="Prefer not to say">Prefer not to say</option>
+              </select>
+            </label>
+          ) : null}
 
           {message.text ? (
             <div

@@ -329,7 +329,15 @@ export default function Home() {
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
         <header className="flex flex-col gap-4 border-b border-zinc-200 pb-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-teal-800">AlumniAspirations</p>
+            <div className="flex items-center gap-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-teal-800">AlumniAspirations</p>
+              {user ? (
+                <Link href="/planner" className="text-xs font-medium text-teal-700 hover:underline flex items-center gap-1">
+                  <CalendarDays size={13} />
+                  My Planner
+                </Link>
+              ) : null}
+            </div>
             <h1 className="mt-2 text-2xl font-semibold text-zinc-950 sm:text-3xl">Browse opportunities</h1>
             <p className="mt-1 max-w-2xl text-sm text-zinc-600">
               Internships, summer programs, scholarships, research, and competitions matched to your aspirations.
@@ -384,8 +392,7 @@ export default function Home() {
 
         {profileSetupNeeded ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            Database setup needed: run <code className="rounded bg-amber-100 px-1">supabase/schema.sql</code> in your
-            Supabase SQL editor. Profile matching will use cached data until then.
+            Personalized sorting is currently limited. The site administrator needs to complete the database setup to enable full matching.
           </div>
         ) : null}
 

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
-import { Clock3, ExternalLink, CalendarDays, KanbanSquare, ListTodo, Trash2 } from "lucide-react";
+import { Clock3, ExternalLink, CalendarDays, KanbanSquare, ListTodo, Trash2, MapPin } from "lucide-react";
 import { PushNotificationManager } from "../components/PushNotificationManager";
 import type { User } from "@supabase/supabase-js";
 import type { Opportunity } from "@/lib/opportunities";
@@ -197,6 +197,12 @@ export default function PlannerPage() {
                         <p className="text-xs font-medium text-slate-500 mt-0.5 line-clamp-1">
                           {item.opportunity_data.organization || "Organization not listed"}
                         </p>
+                        {item.opportunity_data.location && (
+                          <div className="flex items-center gap-1 text-xs font-medium text-slate-500 mt-0.5">
+                            <MapPin size={12} />
+                            <span className="line-clamp-1">{item.opportunity_data.location}</span>
+                          </div>
+                        )}
                       </div>
                       
                       {item.opportunity_data.deadline && (
@@ -259,6 +265,12 @@ export default function PlannerPage() {
                       {item.opportunity_data.title}
                     </h3>
                     <p className="text-sm text-slate-500 truncate">{item.opportunity_data.organization}</p>
+                    {item.opportunity_data.location && (
+                      <div className="flex items-center gap-1 text-xs text-slate-500 mt-1">
+                        <MapPin size={12} />
+                        <span className="truncate">{item.opportunity_data.location}</span>
+                      </div>
+                    )}
                     <div className="mt-2 flex items-center justify-between">
                       <span className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-semibold ${getStatusColor(item.status)}`}>
                         {item.status}

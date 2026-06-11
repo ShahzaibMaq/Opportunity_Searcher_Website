@@ -242,8 +242,8 @@ def normalize_extracted_item(
         link = find_link_for_title(title, html, page_url)
 
     if not link or not link_on_page(link, page_text, page_links):
-        print(f"LLM skip (no verified link): {title}")
-        return None
+        print(f"LLM warning (link unverified): {title}. Using page URL.")
+        link = page_url
 
     category = clean_text(item.get("category"))
     if category not in ALLOWED_CATEGORIES:

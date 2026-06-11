@@ -48,6 +48,15 @@ const stateAliases: Record<string, string[]> = {
   "united states": ["united states", "usa", "us", "national"],
 };
 
+const neighboringStates: Record<string, string[]> = {
+  "new jersey": ["new york", "pennsylvania", "delaware", "connecticut"],
+  "new york": ["new jersey", "connecticut", "pennsylvania"],
+  pennsylvania: ["new jersey", "new york", "delaware"],
+  connecticut: ["new york", "new jersey", "massachusetts"],
+  delaware: ["new jersey", "pennsylvania"],
+  massachusetts: ["connecticut", "new york"],
+};
+
 export function uniqueSorted(values: string[]) {
   return Array.from(new Set(values.filter(Boolean))).sort((first, second) =>
     first.localeCompare(second),
@@ -69,7 +78,7 @@ export function parseDeadline(opportunity: DeadlineFields) {
     return Number.isNaN(parsedIso.getTime()) ? null : parsedIso;
   }
 
-  if (!opportunity.deadline) {
+  if (!opportunity.deadline || /not listed|rolling|tba|tbd|none/i.test(opportunity.deadline)) {
     return null;
   }
 
@@ -234,6 +243,7 @@ export function matchDetails(opportunity: Opportunity, profile: UserProfile): Ma
   const subjectText = normalizeSearchText(`${opportunity.subject_area ?? ""} ${opportunity.description}`);
   const profileState = stateFromText(profile.location);
   const opportunityState = stateFromText(opportunity.location);
+  const isNeighbor = profileState && opportunityState && neighboringStates[profileState]?.includes(opportunityState);
 
   if (gradeMatches(profile.grade, opportunity.grade_level)) {
     details.push({ label: `Grade ${profile.grade}`, score: 3 });
@@ -246,6 +256,8 @@ export function matchDetails(opportunity: Opportunity, profile: UserProfile): Ma
       isRemoteOrNational(opportunity.location))
   ) {
     details.push({ label: profileState ? titleCase(profileState) : profile.location, score: 2 });
+  } else if (isNeighbor) {
+    details.push({ label: `Nearby (${titleCase(opportunityState)})`, score: 1 });
   }
 
   for (const interest of profile.interests ?? []) {

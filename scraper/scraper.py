@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import sys
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -526,7 +527,7 @@ def write_csv(records: list[Opportunity], path: Path) -> None:
     ]
     
     with path.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer = csv.DictWriter(file, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
 

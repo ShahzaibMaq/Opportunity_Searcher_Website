@@ -15,6 +15,7 @@ type OnboardingForm = {
   interests: string[];
   location: string;
   goals: string;
+  gender: string;
 };
 
 const emptyForm: OnboardingForm = {
@@ -22,6 +23,7 @@ const emptyForm: OnboardingForm = {
   interests: [],
   location: "",
   goals: "",
+  gender: "",
 };
 
 export default function OnboardingPage() {
@@ -80,6 +82,7 @@ export default function OnboardingPage() {
         interests: mergedProfile.interests ?? [],
         location: mergedProfile.location ?? "",
         goals: mergedProfile.goals ?? "",
+        gender: mergedProfile.gender ?? "",
       });
       setIsLoading(false);
     }
@@ -118,6 +121,7 @@ export default function OnboardingPage() {
       interests: form.interests,
       location: form.location.trim(),
       goals: form.goals,
+      gender: form.gender,
     };
 
     const [{ error: profileError }, { error: authError }] = await Promise.all([
@@ -211,6 +215,22 @@ export default function OnboardingPage() {
             {GOAL_OPTIONS.map((goal) => (
               <option key={goal}>{goal}</option>
             ))}
+          </select>
+        </label>
+
+        <label className="grid gap-1 text-sm font-medium text-zinc-700">
+          Gender
+          <select
+            value={form.gender}
+            onChange={(event) => setForm((current) => ({ ...current, gender: event.target.value }))}
+            className="h-10 rounded-md border border-zinc-200 px-3 text-sm outline-none focus:border-teal-700"
+            required
+          >
+            <option value="">Select gender</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Non-binary">Non-binary</option>
+            <option value="Prefer not to say">Prefer not to say</option>
           </select>
         </label>
 

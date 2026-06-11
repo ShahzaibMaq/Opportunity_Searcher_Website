@@ -5,11 +5,6 @@ from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
 
-from __future__ import annotations
-
-import re
-from dataclasses import dataclass
-from urllib.parse import urljoin, urlparse
 
 
 # Constants
@@ -125,16 +120,22 @@ def normalize_category(
 
 
 def infer_category(title: str, description: str, fallback: str = "Activity") -> str:
-    haystack = f"{title} {description}".lower()
+    title_lower = title.lower()
     checks = [
         ("Scholarship", ["scholarship", "grant", "financial aid"]),
-        ("Competition", ["competition", "challenge", "contest", "prize"]),
+        ("Competition", ["competition", "challenge", "contest", "prize", "essay"]),
         ("Research", ["research", "laboratory", "lab ", "science research"]),
         ("Internship", ["internship", "intern ", "apprenticeship"]),
         ("Summer Program", ["summer", "program"]),
         ("Volunteering", ["volunteer", "volunteering"]),
     ]
 
+    # Check title first for stronger signals
+    for category, keywords in checks:
+        if any(keyword in title_lower for keyword in keywords):
+            return category
+
+    haystack = f"{title} {description}".lower()
     for category, keywords in checks:
         if any(keyword in haystack for keyword in keywords):
             return category
@@ -223,8 +224,8 @@ def enrich_opportunity_fields(opp: Opportunity) -> Opportunity:
         category=normalize_category(opp.category, opp.title, opp.description),
         location=normalize_location(opp.location),
         subject_area=clean_text(opp.subject_area),
-        deadline=clean_text(opp.deadline),
-        timeline=clean_text(opp.timeline),
+        deadline=clean_text(opp.deadline) or infer_deadline(opp.description),
+        timeline=clean_text(opp.timeline) or infer_timeline(opp.description),
         grade_level=clean_text(opp.grade_level) or "High School",
         description=truncate(opp.description, 500),
         link=normalize_link(opp.link, "") or opp.link,
@@ -249,7 +250,10 @@ def is_scope_filtered(location: str) -> bool:
         return False
     
     # Filter out specific out-of-scope states (CA, FL, TX, etc)
-    out_of_scope = ["california", "ca", "florida", "fl", "texas", "tx"]
+    out_of_scope = [
+        "california", "ca ", "florida", "fl ", "texas", "tx ", 
+        "washington", "seattle", "illinois", "chicago", "boston", "massachusetts"
+    ]
     if any(keyword in location_lower for keyword in out_of_scope):
         return True
     

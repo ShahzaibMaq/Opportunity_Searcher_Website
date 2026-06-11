@@ -6,7 +6,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 TRACKING_QUERY_PREFIXES = ("utm_",)
 TRACKING_QUERY_KEYS = {"fbclid", "gclid", "mc_cid", "mc_eid"}
-MIN_TITLE_SIMILARITY = 0.72
+MIN_TITLE_SIMILARITY = 0.65
 MIN_URL_SIMILARITY = 0.62
 
 
